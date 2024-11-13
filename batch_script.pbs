@@ -1,0 +1,20 @@
+#!/bin/bash
+#
+#PBS -q batch
+#PBS -N LATTICE
+#PBS -l nodes=cu12:ppn=1
+#PBS -l walltime=999:00:00   \\申请999小时的工作，不满足将无法继续进行计算
+#PBS -e err.LATTICE.txt
+#PBS -o out.LATTICE.txt
+
+cd $PBS_O_WORKDIR
+
+source /home/pengyan/module_dqmc
+
+date
+
+JOBS
+
+date
+
+
