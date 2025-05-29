@@ -1,0 +1,2264 @@
+module DQMC_Phy
+#include "dqmc_include.h"
+
+  use DQMC_UTIL
+  use DQMC_WSPACE
+  use DQMC_STRUCT
+  use DQMC_Geom_Wrap
+
+  implicit none 
+  
+  !
+  ! This module contains data structure and subroutines for some 
+  ! physics measurement on Hubbard's model, including
+  ! 
+  !     1.  Up spin occupancy
+  !     2.  Down spin occupancy
+  !     3.  Potential energy
+  !     4.  Kinetic energy
+  !     5.  Total engery
+  !     6.  Density
+  !     7.  XX ferromagnetic structure factor
+  !     8.  ZZ ferromagnetic structure factor
+  !     9.  XX antiferromagnetic structure factor
+  !    10.  ZZ antiferromagnetic structure factor
+  !    11.  RMS XX AF SF
+  !    12.  RMS ZZ AF SF
+  !    13.  Average sign
+  !    14.  Average up sign
+  !    15.  Average down sign
+  !    16.  Equal time Green's function
+  !    17.  Density-density correlation fn: (up-up)
+  !    18.  Density-density correlation fn: (up-dn)
+  !    19.  XX Spin correlation function
+  !    20.  Root mean squre XX Spin correlation function
+  !    21.  ZZ Spin correlation function
+  !    22.  Root mean squre ZZ Spin correlation function
+  !
+  ! Measurement 1-15 are scalars. 16-20 are lists of length
+  ! nClass, which are the number of distinct autocorrelation terms.
+  ! (see DQMC_STRUCT for more details about nClass.)
+  !
+  ! List of subroutines
+  ! ===================
+  !    1. DQMC_Phy_Init(P0, nClass, nBin, nHist)
+  !    2. DQMC_Phy_Normalize(P0, u)
+  !    3. DQMC_Phy_Print(P0, S, OPT)
+  !    4. DQMC_Phy_GetErr(P0)
+  !    5. DQMC_Phy_Dump(P0, idx, opt)
+  !    6. DQMC_PHY0_Hist(n, nBin, over, under, H, list, GetIndex)
+  !    7. DQMC_Meas0(n, P0, G_up, G_dn, mu, t, sgnup, sgndn, S, up, dn)
+  !
+  !    *** Most subroutines are for internal use only. User program 
+  !        should not need any of them.
+  !
+  ! Data Structure and Parameters
+  ! =============================
+  !    The data type Phy is consisted of two parts: the measurements
+  !    and the histograms. 
+  !    
+  !    The measurements are put into bins and then analysized in the end.
+  !    To make data manipulation easy, all scalar variables are put into
+  !    an array S and identified by the indeces, which are defined by the
+  !    parameters below. Each column of S represents a bin.
+  !    List variables, like Green's function, are put into separated 
+  !    arrays, in which each column is also for one bin. 
+  !        
+  !    There are two special bins, averge and error, which are used to
+  !    store the final averaged result and error. Their indeces are 
+  !    specified by 'avg' and 'err' respectively.
+  !
+  !    The histogram part consists of three histograms, each having
+  !    nHist+2 bins. They are histogram for up occupancy (Nup), 
+  !    down occupancy (Ndn), and Nup*Ndn. The additional two bins
+  !    are for data exceeds the range, whose indeces are specified
+  !    by 'over' and 'under' respectively.
+  !
+
+  ! Array    
+  integer, parameter  :: narrays = 13
+
+  ! Index of the array varaiables
+  integer, parameter  :: IMEAS = 0
+  integer, parameter  :: IGFUN = 1
+  integer, parameter  :: IGFUP = 2
+  integer, parameter  :: IGFDN = 3
+  integer, parameter  :: ISPXX = 4
+  integer, parameter  :: ISPZZ = 5
+  integer, parameter  :: IAVSP = 6
+  integer, parameter  :: IDEN0 = 7
+  integer, parameter  :: IDEN1 = 8
+  integer, parameter  :: IPAIR = 9
+  integer, parameter  :: IMloc = 10
+  integer, parameter  :: INdou = 11
+  integer, parameter  :: IEloc = 12
+  integer, parameter  :: IPAIRd = 13
+
+  ! Parameter for the index of scalar variables (IMEAS)
+  integer, parameter :: P0_DENSITY   = 1
+  integer, parameter :: P0_NUP       = 2
+  integer, parameter :: P0_NDN       = 3
+  integer, parameter :: P0_NUD       = 4
+  integer, parameter :: P0_M2        = 5
+
+  integer, parameter :: P0_ENERGY    = 6
+  integer, parameter :: P0_KE        = 7
+  integer, parameter :: P0_PE        = 8
+  integer, parameter :: P0_Ehop      = 9
+  integer, parameter :: P0_KE_UP     = 10
+  integer, parameter :: P0_KE_DN     = 11
+  integer, parameter :: P0_Kx        = 12
+  integer, parameter :: P0_Kx_up     = 13
+  integer, parameter :: P0_Kx_dn     = 14
+
+  integer, parameter :: P0_CHIT      = 15
+  integer, parameter :: P0_CV        = 16
+
+  integer, parameter :: P0_SFERRO    = 17
+  integer, parameter :: P0_SFER2     = 18
+  integer, parameter :: P0_SAFx      = 19
+  integer, parameter :: P0_SAFx2     = 20
+  integer, parameter :: P0_SAFz      = 21
+  integer, parameter :: P0_SAFz2     = 22
+
+  ! FM structure factor for two sublattice
+  integer, parameter :: P0_SFMx_sub1 = 23
+  integer, parameter :: P0_SFMx_sub2 = 24
+  integer, parameter :: P0_SFMz_sub1 = 25
+  integer, parameter :: P0_SFMz_sub2 = 26
+
+  integer, parameter :: P0_CDW       = 27
+  integer, parameter :: P0_NNPROD    = 28
+  integer, parameter :: P0_NNSUM     = 29
+  integer, parameter :: P0_PAIR      = 30
+  integer, parameter :: P0_PAIRd      = 31
+
+  ! structure factor for (pi,0) similar to AF
+  integer, parameter :: P0_S0pix     = 32
+  integer, parameter :: P0_S0piz     = 33
+
+  integer, parameter :: P0_N_NO_SAF  = 12
+  integer, parameter :: P0_N         = 33
+
+  integer, parameter :: P0_SGN       = 1
+  integer, parameter :: P0_SGNUP     = 2
+  integer, parameter :: P0_SGNDN     = 3
+
+
+  ! Name of scalar variables
+  character(len=*), parameter :: P0_STR(P0_N) = (/&
+       "                    Density : ", &
+       "          Up spin occupancy : ", &
+       "        Down spin occupancy : ", &
+       "               <N_up*N_dn>  : ", &
+       "         Local moment <m^2> : ", &
+       "               Total energy : ", &
+       "Kinetic energy=Ehop+mu_term : ", &
+       "           Potential energy : ", &
+       "             Hopping energy : ", &
+       "          UP Kinetic energy : ", &
+       "          DN Kinetic energy : ", &
+       "                      <-Kx> : ", &
+       "                   <-Kx_up> : ", &
+       "                   <-Kx_dn> : ", &
+       "                Chi_thermal : ", &
+       "              Specific heat : ", &
+       "  XX Ferro structure factor : ", &
+       "  ZZ Ferro structure factor : ", &
+       "     XX AF structure factor : ", &
+       "  Root Mean Square of XX AF : ", &
+       "     ZZ AF structure factor : ", &
+       "  Root Mean Square of ZZ AF : ", &
+       "XX FM structure factor sub1 : ", &
+       "XX FM structure factor sub2 : ", &
+       "ZZ FM structure factor sub1 : ", &
+       "ZZ FM structure factor sub2 : ", &
+       "    CDW AF structure factor : ", &
+       "Den*Den AF structure factor : ", &
+       "Den+Den AF structure factor : ", &
+       " s-wave FM structure factor : ", &
+       " d-wave FM structure factor : ", &
+       " XX (pi,0) structure factor : ", &
+       " ZZ (pi,0) structure factor : "/)
+  character(len=*), parameter :: P0_SIGN_STR(3) = (/&
+       "                   Avg sign : ", &
+       "                Avg up sign : ", &
+       "                Avg dn sign : "/)
+
+
+  type Phy
+     ! Measurement part
+     integer  :: nClass                     ! Number of distinct 
+                                            ! autocorrelction terms
+     integer  :: nBin                       ! Number of terms
+     integer  :: nMeas                      ! Number of measurements
+     integer  :: avg, err                   ! Index for average and error
+                                            ! bins.
+     integer  :: cnt                        ! Number of measurement for 
+                                            ! current bin
+     integer  :: idx                        ! current bin index
+
+     integer   :: n                         ! total number of sites
+     real(wp)  :: beta                      ! Inverse Temperature
+    
+     ! Scalar array
+     real(wp), pointer :: meas(:, :)        ! Scalar varaibles
+     real(wp), pointer :: sign(:, :)        ! Scalar varaibles
+
+     ! Indices
+     integer :: IARR(0: narrays + 1) 
+     integer :: IARRFT(1: narrays + 1)
+     integer :: IARREV(1: narrays + 1)
+
+     real(wp), pointer   :: AllProp(:, :)             ! Vector of all properties
+     real(wp), pointer   :: AllPropFT(:, :)           ! Matrix of FT 
+     real(wp), pointer   :: AllPropEigVal(:, :)       ! Vector of Fourier transforms
+     complex*16, pointer :: AllPropEigVec(:, :, :, :)   ! Vector with the normal modes
+
+     !Pointers to AllProp
+     real(wp), pointer :: G_fun(:, :)    ! Green's function
+     real(wp), pointer :: Gf_up(:, :)    ! Green's function
+     real(wp), pointer :: Gf_dn(:, :)    ! Green's function
+     real(wp), pointer :: SpinXX(:, :)   ! XX Spin correlation function
+     real(wp), pointer :: SpinZZ(:, :)   ! ZZ Spin correlation function
+     real(wp), pointer :: AveSpin(:, :)  ! Ave Spin correlation function
+     real(wp), pointer :: Den0(:, :)     ! Density-density correlation 
+     real(wp), pointer :: Den1(:, :)     ! up-up (0) and up-dn (1) 
+     real(wp), pointer :: Pair(:, :)     ! on-site pairing
+     real(wp), pointer :: Paird(:, :)     ! d-wave pairing
+     real(wp), pointer :: Mloc(:, :)     ! local moment
+     real(wp), pointer :: Ndou(:, :)     ! local double occupancy
+     real(wp), pointer :: Eloc(:, :)     ! local entangelment entropy
+
+     !structure factor of all possible spin correlations between orbitals
+     integer :: Ncspin
+     real(wp), allocatable :: Cspinxx(:,:,:)
+     real(wp), allocatable :: Cspinzz(:,:,:)
+
+     !structure factor of all possible charge correlations between orbitals
+     integer :: Nccharge
+     real(wp), allocatable :: Ccharge(:,:,:)
+
+     !for charge structure factor of c and f of staggered PAM
+     ! nnprod = (nc+nf)*(nc+nf), n_c*n_c, n_f*n_f
+     ! nnsum  = (nc+nf)+(nc+nf), n_c+n_c, n_f+n_f
+     ! S_cdw  = <(n-<n>)*(n-<n>)> so that need nnsum
+     real(wp), allocatable :: Snnprod(:,:)
+     real(wp), allocatable :: Snnsum(:,:)
+
+     !For staggered PAM, add measurements of 
+     !Scdw_c = sum AF
+
+     ! working space
+     real(wp), pointer :: up(:) 
+     real(wp), pointer :: dn(:) 
+     logical :: compSAF
+     logical :: init
+     logical :: initFT
+
+     ! 12/27/2015
+     ! used for KE_up(dn) in x direction <-Kx> for D and Ds
+     integer, ALLOCATABLE :: rt(:,:), lf(:,:), top(:,:), bot(:,:)
+     complex*16, ALLOCATABLE  :: hopup(:,:), hopdn(:,:)
+
+     ! 02/19/2020
+     ! obtain the cartesian coordinates of sites, used for
+     ! FM structure factor for two sublattice in plane
+     real(wp), pointer :: cartpos(:,:)
+  end type Phy
+
+contains
+
+  ! Subroutines
+  ! ==================================================================
+  
+  subroutine DQMC_Phy_Init(model, P0, S, beta, nBin, WS, Gwrap)
+    use DQMC_Geom_Wrap
+    !
+    ! Purpose
+    ! =======
+    !    This subroutine initializes Phy.
+    !
+    !  Pre-assumption
+    ! ==============
+    !    nClass, nBin and nHist are positive integers.
+    !
+    ! Arguments
+    ! =========
+    !
+    integer, intent(in)       :: model
+    type(Phy), intent(inout)  :: P0      ! Phy to be initialized
+    type(Struct), intent(in)  :: S
+    integer, intent(in)       :: nBin    ! No of bins
+    real(wp), intent(in)      :: beta
+    type(WSpace), intent(in), target :: WS
+    type(GeomWrap), intent(in) :: Gwrap
+
+    ! ... Local vars ...
+    integer :: i, j, n
+
+    ! ... Executable ...
+
+    P0%nClass  = S%nClass
+    P0%nBin    = nBin
+    P0%n       = S%nsite
+    P0%beta    = beta
+
+    ! if using MPI, nBin is set to 1 in DQMC_Hub_Config
+    P0%avg     = nBin + 1
+    P0%err     = nBin + 2
+    P0%cnt     = 0
+    P0%idx     = 1
+
+    P0%compSAF = S%checklist(STRUCT_PHASE)
+    ! count total number of data
+!    if (P0%compSAF) then
+       P0%nmeas = P0_N    ! # of scalar variables
+!    else
+!       p0%nMeas = P0_N_NO_SAF
+!    end if
+
+    ! Allocate storages for sign and properties
+    ! narrays is # of array variables, e.g. Gfun, SPXX
+    n = P0%nmeas + P0%nClass * narrays
+    allocate(P0%sign(3, P0%err))  
+    allocate(P0%AllProp(n, P0%err))
+
+    !Pointers to beginning of each array
+    P0%IARR(IMEAS) = 1
+    do i = 1, narrays + 1
+       P0%IARR(i) = P0%nmeas + 1 + (i - 1) * P0%nClass 
+    enddo
+ 
+    P0%meas    => P0%AllProp(P0%IARR(IMEAS):P0%IARR(IMEAS + 1) - 1, :)
+    P0%G_fun   => P0%AllProp(P0%IARR(IGFUN):P0%IARR(IGFUN + 1) - 1, :)
+    P0%Gf_up   => P0%AllProp(P0%IARR(IGFUP):P0%IARR(IGFUP + 1) - 1, :)
+    P0%Gf_dn   => P0%AllProp(P0%IARR(IGFDN):P0%IARR(IGFDN + 1) - 1, :)
+    P0%SpinXX  => P0%AllProp(P0%IARR(ISPXX):P0%IARR(ISPXX + 1) - 1, :)
+    P0%SpinZZ  => P0%AllProp(P0%IARR(ISPZZ):P0%IARR(ISPZZ + 1) - 1, :)
+    P0%AveSpin => P0%AllProp(P0%IARR(IAVSP):P0%IARR(IAVSP + 1) - 1, :)
+    P0%Den0    => P0%AllProp(P0%IARR(IDEN0):P0%IARR(IDEN0 + 1) - 1, :)
+    P0%Den1    => P0%AllProp(P0%IARR(IDEN1):P0%IARR(IDEN1 + 1) - 1, :)
+    P0%Pair    => P0%AllProp(P0%IARR(IPAIR):P0%IARR(IPAIR + 1) - 1, :)
+    P0%Paird   => P0%AllProp(P0%IARR(IPAIRd):P0%IARR(IPAIRd + 1) - 1, :)
+    P0%Mloc    => P0%AllProp(P0%IARR(IMloc):P0%IARR(IMloc + 1) - 1, :)
+    P0%Ndou    => P0%AllProp(P0%IARR(INdou):P0%IARR(INdou + 1) - 1, :)
+    P0%Eloc    => P0%AllProp(P0%IARR(IEloc):P0%IARR(IEloc + 1) - 1, :)
+
+    !allocate(P0%meas(P0%nMeas, nBin+2))
+    !allocate(P0%sign(3, nBin+2))
+    !allocate(P0%G_fun  (nClass, nBin+2))
+    !allocate(P0%Gf_up  (nClass, nBin+2))
+    !allocate(P0%Gf_dn  (nClass, nBin+2))
+    !allocate(P0%SpinXX (nClass, nBin+2))
+    !allocate(P0%SpinZZ (nClass, nBin+2))
+    !allocate(P0%AveSpin(nClass, nBin+2))
+    !allocate(P0%Den0   (nClass, nBin+2))
+    !allocate(P0%Den1   (nClass, nBin+2))
+    !allocate(P0%Pair   (nClass, nBin+2))
+    !allocate(P0%Mloc (nClass, nBin+2))
+
+    ! To calculate AF structure between individual orbital-orbital contribution
+    ! map site index in the unit cell to orbital c1,c2,f1,f2 of inhomo PAM
+    select case (model)
+      ! hubbard square
+      ! 250522 for 3band model
+      case (0)
+        P0%Ncspin = 3
+        P0%Nccharge = 3
+
+      ! conventional PAM square
+      case (1)
+        P0%Ncspin = 2
+        P0%Nccharge = 2
+
+      ! staggered PAM square, 8 site unit cell
+      ! 0,2,4,6 are c orbs and 1,3,5,7 are f orbs
+      ! map to orbital order: c1,c2,f1,f2
+      case (2)
+        P0%Ncspin = 4
+        P0%Nccharge = 4
+
+      ! PAM coupled with additional f-orbital
+      ! unit cell from bottom to top: c,f,f1 orbs
+      case (3)
+        P0%Ncspin = 3
+        P0%Nccharge = 3
+
+      ! for stacked two PAMs coupled with additional V12
+      ! unit cell from bottom to top: c1,f1,f2,c2 orbs
+      ! map to orbital order: c1,f1,f2,c2
+      case (4)
+        P0%Ncspin = 4
+        P0%Nccharge = 4
+
+      ! unit cell from bottom to top: c1,f1,c2,f2 orbs
+      ! might be relevant to Ce3PtIn11
+      case (5)
+        P0%Ncspin = 4
+        P0%Nccharge = 4
+
+      ! f2-c2-f1-c1-f1-c2 model for Ce3PtIn11
+      ! each layer is one orbital, directly from lattice structure
+      case (6)
+        P0%Ncspin = 6
+        P0%Nccharge = 6
+
+      ! bilayer square that can differ
+      case (7)
+        P0%Ncspin = 2
+        P0%Nccharge = 2
+    end select
+
+    allocate(P0%Cspinxx(P0%Ncspin, P0%Ncspin, P0%nBin+2))
+    allocate(P0%Cspinzz(P0%Ncspin, P0%Ncspin, P0%nBin+2))
+    allocate(P0%Ccharge(P0%Nccharge, P0%Nccharge, P0%nBin+2))
+    allocate(P0%Snnprod(3, P0%nBin+2))
+    allocate(P0%Snnsum (3, P0%nBin+2))
+
+    ! Initialize 
+    P0%meas    = ZERO
+    P0%sign    = ZERO
+    P0%G_fun   = ZERO
+    P0%Gf_up   = ZERO
+    P0%Gf_dn   = ZERO
+    P0%SpinXX  = ZERO
+    P0%SpinZZ  = ZERO
+    P0%AveSpin = ZERO
+    P0%Den0    = ZERO
+    P0%Den1    = ZERO
+    P0%Pair    = ZERO
+    P0%Paird   = ZERO
+    P0%Mloc    = ZERO
+    P0%Ndou    = ZERO    
+    P0%Eloc    = ZERO
+    P0%Cspinxx = ZERO
+    P0%Cspinzz = ZERO
+    P0%Ccharge = ZERO
+    P0%Snnprod = ZERO
+    P0%Snnsum  = ZERO
+    P0%up => WS%R5
+    P0%dn => WS%R6
+
+    P0%init = .true.
+
+    ! 10/26/2012
+    ! The following pointers will be allocated in DQMC_GetFT():
+    !
+    !     AllPropFT(:,:)           ! Matrix of FT 
+    !     AllPropEigVal(:,:)       ! Vector of Fourier transforms
+    !     AllPropEigVec(:,:,:,:)   ! Vector with the normal modes
+    !
+    ! However, dqmc_2dperl.F90 does not calculate momentum space observables, the status of the
+    ! three pointer arrays become associated, but never allocated. This is why in /EXAMPLE/test,
+    ! test.F90 generates the error message at the end of the simulation:
+    !
+    !    pointer being freed was not allocated
+    !
+    ! This happens only in /EXAMPLE/test/test.F90, not in /EXAMPLE/geom/ggeom.F90. To fix this,
+    ! I added a flag that checks whether these arrays are allocated. The default value is .false.
+    ! It will be changed to .true. once DQMC_GetFT() is called.
+    P0%initFT = .false.
+
+    ! 12/27/2015:
+    ! The following is the same as in tdm.F90
+    ! IMPORTANT: the indices of Gtau(1:nsites) and hamilt(0:nsites-1) are different
+    ! Note difference from rt etc. in dqmc_hamilt.F90
+    ! So switch the values to from 1 to nSite, instead of 0 to nSite-1
+    ! should be correct for any unit cell definition
+    allocate(P0%rt(1:S%nSite, 3))
+    allocate(P0%lf(1:S%nSite, 3))
+    allocate(P0%top(1:S%nSite, 3))
+    allocate(P0%bot(1:S%nSite, 3))
+    allocate(P0%hopup(1:S%nSite,1:S%nSite))
+    allocate(P0%hopdn(1:S%nSite,1:S%nSite))
+
+    do i = 1, S%nSite
+       P0%rt(i, :)  = Gwrap%Hamilt%rt(i-1, :)+1
+       P0%rt(i, :)  = Gwrap%Hamilt%lf(i-1, :)+1
+       P0%top(i, :) = Gwrap%Hamilt%up(i-1, :)+1
+       P0%bot(i, :) = Gwrap%Hamilt%dn(i-1, :)+1
+       do j = 1, S%nSite
+          P0%hopup(i,j) = Gwrap%Hamilt%hopup(i-1,j-1)
+          P0%hopdn(i,j) = Gwrap%Hamilt%hopdn(i-1,j-1)
+       enddo
+    enddo
+
+    allocate(P0%cartpos(3, 0:S%nSite-1))
+    P0%cartpos = Gwrap%lattice%cartpos
+
+   end subroutine DQMC_Phy_Init
+
+  !--------------------------------------------------------------------!
+
+  subroutine DQMC_Phy_Free(P0)
+    !
+    ! Purpose
+    ! =======
+    !    This subroutine frees Phy.
+    !
+    ! Arguments
+    ! =========
+    !
+    type(Phy), intent(inout) :: P0      ! Phy to be freed
+
+    ! ... Executable ...
+    if (P0%init) then
+
+       nullify(P0%meas)
+       nullify(P0%G_fun, P0%Gf_up, P0%Gf_dn)
+       nullify(P0%SpinXX, P0%SpinZZ, P0%AveSpin)
+       nullify(P0%Den0, P0%Den1, P0%Pair, P0%Paird, P0%Mloc, P0%Ndou, P0%Eloc)
+
+       deallocate(P0%AllProp, P0%sign)
+
+       ! P0%initFT = .true. if DQMC_GetFT() was called
+       if (P0%initFT) then
+          deallocate(P0%AllPropEigVal)
+          deallocate(P0%AllPropEigVec)
+       endif
+    end if
+
+    deallocate(P0%Cspinxx)
+    deallocate(P0%Cspinzz)
+    deallocate(P0%Ccharge)
+    deallocate(P0%Snnprod)
+    deallocate(P0%Snnsum)
+    deallocate(P0%rt)
+    deallocate(P0%lf)
+    deallocate(P0%top)
+    deallocate(P0%bot)
+    deallocate(P0%hopup)
+    deallocate(P0%hopdn)
+
+  end subroutine DQMC_Phy_Free
+
+  !--------------------------------------------------------------------!
+
+  subroutine DQMC_Phy_Meas(model, n, P0, G_up, G_dn, U, mu_up, mu_dn, t_up, t_dn, sgnup, sgndn, S)
+    ! Called by DQMC_Hub_FullMeas in dqmc_hubbard.F90
+    !
+    ! Purpose
+    ! =======
+    !    This subroutine performs some physics measurement on
+    !    Hubbard model.
+    !
+    ! Arguments
+    ! =========
+    !
+    integer, intent(in)          :: model
+    integer, intent(in)          :: n            ! Number of sites
+    type(Phy), intent(inout)     :: P0           ! Phy
+    real(wp), intent(in)         :: G_up(n,n)    ! Green's function
+    real(wp), intent(in)         :: G_dn(n,n)    ! for spin up and down
+    real(wp), intent(in)         :: sgnup, sgndn ! Sgn for det(G_up) det(G_dn)
+    real(wp), intent(in)         :: mu_up(n), mu_dn(n)  ! Chemical and Kinetic para
+    real(wp), intent(in)         :: t_up(:), t_dn(:)  ! Chemical and Kinetic para
+    real(wp), intent(in)         :: U(:)         ! Chemical and Kinetic para
+    type(Struct), intent(in)     :: S            ! Underline structure
+
+    ! ... local scalar ...
+
+    integer  :: i, j, k, ph, correction          ! Loop iterator
+    integer  :: al1, al2, al3, al4, ire, jre     ! For 3band d-wave pairing, loop over 3 sites for 4 times
+    integer  :: tmp, idx, m, o1, o2              ! Helper variables
+    real(wp) :: sgn                        
+    real(wp) :: var1, var2, var3, var4, var5, a16 ! a16 has 16 terms for d-wave pairing     
+    real(wp) :: x1,y1,z1,x2,y2,z2
+    integer, pointer  :: start(:) 
+    integer, pointer  :: r(:) 
+    integer, pointer  :: A(:) 
+    integer, allocatable :: cf(:)
+
+    ! Auxiliary variable for chi_thermal and C_v
+    real(wp) :: Cbar, Nbar, Tbar, un
+    real(wp) :: h_up(n, n), h_dn(n, n) 
+    real(wp) :: A_up(n, n), A_dn(n, n)
+
+    ! ... executable ...
+
+    idx = P0%idx
+    tmp = P0%avg
+
+    ! initialization
+    ! Here we use avg bin as a temp variable 
+    P0%meas(:,tmp)   = ZERO
+
+    P0%G_fun(:,tmp)  = ZERO
+    P0%Gf_up(:,tmp)  = ZERO
+    P0%Gf_dn(:,tmp)  = ZERO
+    P0%Den0(:,tmp)   = ZERO
+    P0%Den1(:,tmp)   = ZERO
+    P0%SpinXX(:,tmp) = ZERO
+    P0%SpinZZ(:,tmp) = ZERO
+    P0%Pair(:,tmp)   = ZERO
+    P0%Paird(:,tmp)   = ZERO
+    P0%Mloc(:,tmp)   = ZERO
+    P0%Ndou(:,tmp)   = ZERO
+    P0%Eloc(:,tmp)   = ZERO
+
+    P0%Cspinxx(:,:,tmp) = ZERO
+    P0%Cspinzz(:,:,tmp) = ZERO
+    P0%Ccharge(:,:,tmp) = ZERO
+    P0%Snnprod(:,tmp)   = ZERO
+    P0%Snnsum (:,tmp)   = ZERO
+
+    ! Compute the site density for spin up and spin down
+    do i = 1, n
+       k = S%D(i,i)
+       !======================================================!
+       ! The density of electrons of spin up(dn) on site i    !
+       ! is 1-G_up(i,i) (1-G_dn(i,i)).                        !
+       ! nup (ndn) is the sum of all spin up (down) electrons.!
+       !======================================================!
+       P0%up(i)  = ONE - G_up(i, i)
+       P0%dn(i)  = ONE - G_dn(i, i)
+       P0%meas(P0_NUD, tmp) = P0%meas(P0_NUD, tmp) + P0%up(i) * P0%dn(i)
+
+       !=================================================================! 
+       ! local double occupancy <n_up*n_dn>     
+       !=================================================================! 
+       var1 = P0%up(i) * P0%dn(i)
+       P0%Ndou(k, tmp) = P0%Ndou(k, tmp) + var1
+
+       !=================================================================! 
+       ! avg <m^2> = <n_up+n_dn> - 2<n_up*n_dn>     
+       !=================================================================! 
+       var2 = P0%up(i) + P0%dn(i) - 2.0d0 * var1
+       P0%meas(P0_M2, tmp) = P0%meas(P0_M2, tmp) + var2
+
+       !=================================================================! 
+       ! local <m^2> = <n_up+n_dn> - 2<n_up*n_dn>     
+       !=================================================================! 
+       P0%Mloc(k, tmp) = P0%Mloc(k, tmp) + var2
+
+       !=================================================================! 
+       ! local entropy     
+       !=================================================================! 
+       var2 = P0%up(i) - var1
+       var3 = P0%dn(i) - var1
+       var4 = 1.0d0 - P0%up(i) - P0%dn(i) + var1
+       ! var4 sometimes can be negative in MC process so that Eloc = NaN
+       !write(*,*) 'Eloc ', var4
+       P0%Eloc(k, tmp) = P0%Eloc(k, tmp) - var1*log(var1) - var2*log(var2) &
+                                         - var3*log(var3) - var4*log(var4)
+
+       !=====================================================================!
+       ! Potential energy (P0%up(i)-0.5d0) * (P0%dn(i)-0.5d0) * U(S%Map(i))
+       !=====================================================================!
+       P0%meas(P0_PE, tmp) = P0%meas(P0_PE, tmp) + & 
+                         P0%up(i) * P0%dn(i) * U(S%Map(i))
+    end do
+
+    P0%meas(P0_NUP, tmp) = sum(P0%up)
+    P0%meas(P0_NDN, tmp) = sum(P0%dn)
+
+    !=================================================================!
+    ! Total occupancy = nup + ndn
+    !=================================================================!
+    P0%meas(P0_DENSITY, tmp) = P0%meas(P0_NUP, tmp) + P0%meas(P0_NDN, tmp)      
+
+    !=================================================================!
+    ! Kinetic energy = Hopping energy + mu term 
+    !=================================================================!
+    ! Hopping energy = tt*sum_{ij\sigma}(G_{ij\sigma}+G_{ji\sigma})
+
+    ! set alias
+    start => S%T%cstart
+    r     => S%T%row
+    A     => S%T%A
+    
+    ! loop all adj sites
+    do i = 1, n  ! for each column
+       do j = start(i), start(i + 1)-1 ! for each nonzero elements
+
+          var1 = t_up(A(j)) * G_up(r(j), i)
+          var2 = t_dn(A(j)) * G_dn(r(j), i)
+          var3 = var1 + var2
+
+          P0%meas(P0_KE_UP, tmp) =  P0%meas(P0_KE_UP, tmp) + var1
+          P0%meas(P0_KE_DN, tmp) =  P0%meas(P0_KE_DN, tmp) + var2
+          P0%meas(P0_KE, tmp)    =  P0%meas(P0_KE, tmp)    + var3
+
+          P0%meas(P0_Ehop, tmp) = P0%meas(P0_Ehop, tmp) + var3
+          P0%meas(P0_ENERGY, tmp) = P0%meas(P0_ENERGY, tmp) + var3
+       end do
+
+       !Include -mu*(nup+ndn)
+       var1 = mu_up(S%Map(i)) * P0%up(i)
+       var2 = mu_dn(S%Map(i)) * P0%dn(i)
+       var3 = var1 + var2
+
+       P0%meas(P0_KE_UP, tmp)  = P0%meas(P0_KE_UP, tmp) - var1
+       P0%meas(P0_KE_DN, tmp)  = P0%meas(P0_KE_DN, tmp) - var2
+       P0%meas(P0_KE, tmp)     = P0%meas(P0_KE, tmp)    - var3
+
+       !=================================================================!
+       ! Total energy = kinetic energy + potential energy
+       !=================================================================!
+       P0%meas(P0_ENERGY, tmp) = P0%meas(P0_ENERGY, tmp) - var3 &
+                   + P0%up(i) * P0%dn(i) * U(S%Map(i))
+    end do
+
+!write(*,*) 'p2'
+    !=================================================================!
+    ! KE in x direction <-Kx> for D and Ds (up and dn spins)
+    !=================================================================!
+!    do i = 1, n
+       ! - sign for <-Kx>
+       ! Below applies for isotropic system
+       !var1 = -0.5d0* (P0%hopup(i,P0%rt(i, 1))*G_up(i, P0%rt(i, 1)) + P0%hopup(i,P0%top(i, 1))*G_up(i, P0%top(i, 1)))
+       !var2 = -0.5d0* (P0%hopdn(i,P0%rt(i, 1))*G_dn(i, P0%rt(i, 1)) + P0%hopdn(i,P0%top(i, 1))*G_dn(i, P0%top(i, 1)))
+       ! only consider x direction
+!write(*,*) i, 'rt=', P0%rt(i, 1)
+!write(*,*) 'p2a'
+!       var1 = -P0%hopup(i,P0%rt(i, 1))*G_up(i, P0%rt(i, 1)) - P0%hopup(P0%rt(i, 1),i)*G_up(P0%rt(i, 1),i)
+!       var2 = -P0%hopdn(i,P0%rt(i, 1))*G_dn(i, P0%rt(i, 1)) - P0%hopdn(P0%rt(i, 1),i)*G_dn(P0%rt(i, 1),i)
+!       var3 = var1 + var2
+
+!       P0%meas(P0_Kx_up, tmp) = P0%meas(P0_Kx_up, tmp) + var1
+!       P0%meas(P0_Kx_dn, tmp) = P0%meas(P0_Kx_dn, tmp) + var2
+!       P0%meas(P0_Kx, tmp)    = P0%meas(P0_Kx, tmp)    + var3
+!    enddo
+
+    !====================================================!
+    ! Chi_thermal for entropy (Simone's email 2010-7-17)
+    !====================================================!
+
+    ! Fill h_up, h_dn with hopping matrix elements
+    h_up = ZERO
+    h_dn = ZERO
+    do i = 1, n
+       do j = start(i), start(i + 1) - 1
+          h_up(r(j), i) =  -t_up(A(j))
+          h_dn(r(j), i) =  -t_dn(A(j))
+       end do
+       h_up(i,i) =  h_up(i,i) - mu_up(S%Map(i)) - 0.5d0 * U(S%Map(i))
+       h_dn(i,i) =  h_dn(i,i) - mu_dn(S%Map(i)) - 0.5d0 * U(S%Map(i))
+    end do
+
+    ! Gfun * t
+    ! Fill h_up, h_dn 
+    call blas_dgemm('N', 'N', n, n, n, ONE, G_up, n, h_up, n, ZERO, A_up, n)
+    call blas_dgemm('N', 'N', n, n, n, ONE, G_dn, n, h_dn, n, ZERO, A_dn, n)
+
+    ! Total number of particles
+    Nbar = sum(P0%up) + sum(P0%dn)
+
+    Tbar = 0.d0
+    do i = 1, n
+       Tbar = Tbar + h_up(i, i) + h_dn(i, i)
+    enddo
+
+    Cbar = 0.d0
+    do i = 1, n
+       Cbar = Cbar + A_up(i, i) + A_dn(i, i)
+    enddo
+
+    !< N T >
+    P0%meas(P0_CHIT, tmp) = (Tbar - Cbar) * Nbar 
+    do j = 1, n
+       do k = 1, n
+          P0%meas(P0_CHIT, tmp) = P0%meas(P0_CHIT, tmp) - G_up(j,k) * A_up(k,j) - G_dn(j,k) * A_dn(k,j)
+       enddo
+    enddo
+    P0%meas(P0_CHIT,tmp) = P0%meas(P0_CHIT, tmp) + Cbar
+
+    !< N U >
+    P0%meas(P0_CHIT,tmp) = P0%meas(P0_CHIT, tmp) + Nbar * P0%meas(P0_NUD, tmp)
+    do i = 1, n
+       un = ONE
+       do k = 1, n 
+          un = un - G_up(i, k) * G_up(k, i)
+       enddo
+       P0%meas(P0_CHIT, tmp) = P0%meas(P0_CHIT, tmp) +  un*P0%dn(i)*U(S%Map(i))
+       un = ONE
+       do k = 1, n 
+          un = un - G_dn(i, k) * G_dn(k, i)
+       enddo
+       P0%meas(P0_CHIT, tmp) = P0%meas(P0_CHIT, tmp) + un*P0%up(i)*U(S%Map(i))
+    enddo
+    P0%meas(P0_CHIT, tmp) = P0%meas(P0_CHIT, tmp) - TWO * P0%meas(P0_NUD, tmp)
+
+    !Scale by inverse temperature
+    P0%meas(P0_CHIT, tmp) = P0%beta * P0%beta * P0%meas(P0_CHIT, tmp)
+
+    !=========================================!
+    ! Specific heat
+    !=========================================!
+
+    !< T T >
+    P0%meas(P0_CV, tmp) = (Tbar - Cbar)**2 
+    do i = 1, n
+       do j = 1, n 
+          P0%meas(P0_CV, tmp) = P0%meas(P0_CV, tmp) + (h_up(i, j) - A_up(i, j)) * A_up(j, i) &
+             + (h_dn(i, j) - A_dn(i, j)) * A_dn(j, i)
+       enddo
+    enddo
+    
+    !< T U >
+    P0%meas(P0_CV,tmp) = P0%meas(P0_CV,tmp) + (Tbar - Cbar)*P0%meas(P0_NUD, tmp) 
+    do i = 1, n 
+       !un = U(S%map(i)) * P0%up(i)
+       un = ZERO
+       do j = 1, n
+          !P0%meas(P0_CV,tmp) = P0%meas(P0_CV,tmp) + un * G_dn(j,i) * (h_dn(i,j) - A_dn(i,j))
+          un = un + G_dn(j, i) * (h_dn(i, j) - A_dn(i, j))
+       enddo
+       P0%meas(P0_CV,tmp) = P0%meas(P0_CV,tmp) + un *  U(S%map(i)) * P0%up(i)
+       !un = U(S%map(i)) * P0%dn(i)
+       un = ZERO
+       do j = 1, n
+          !P0%meas(P0_CV,tmp) = P0%meas(P0_CV,tmp) + un * G_up(j,i) * (h_up(i,j) - A_up(i,j))
+          un = un + G_up(j, i) * (h_up(i, j) - A_up(i, j))
+       enddo
+       P0%meas(P0_CV, tmp) = P0%meas(P0_CV, tmp) + un *  U(S%map(i)) * P0%dn(i)
+    enddo
+
+    !< U T >
+    P0%meas(P0_CV, tmp) = P0%meas(P0_CV, tmp) + (Tbar - Cbar)*P0%meas(P0_NUD, tmp) 
+    do i = 1, n 
+       P0%meas(P0_CV, tmp) = P0%meas(P0_CV, tmp) + U(S%map(i)) * P0%up(i) * A_dn(i,i)
+       !un = U(S%map(i)) * P0%up(i)
+       un = ZERO
+       do j = 1, n
+          !P0%meas(P0_CV,tmp) = P0%meas(P0_CV,tmp) - un * A_dn(i,j) * G_dn(j,i)
+          un = un + A_dn(i,j) * G_dn(j,i)
+       enddo
+       P0%meas(P0_CV,tmp) = P0%meas(P0_CV,tmp) - un * U(S%map(i)) * P0%up(i)
+
+       P0%meas(P0_CV,tmp) = P0%meas(P0_CV,tmp) + U(S%map(i)) * P0%dn(i) * A_up(i,i)
+       !un = U(S%map(i)) * P0%dn(i)
+       un = ZERO
+       do j = 1, n
+          !P0%meas(P0_CV,tmp) = P0%meas(P0_CV,tmp) - un * A_up(i,j) * G_up(j,i)
+          un = un + A_up(i,j) * G_up(j,i)
+       enddo
+       P0%meas(P0_CV,tmp) = P0%meas(P0_CV,tmp) - un * U(S%map(i)) * P0%dn(i)
+    enddo
+
+    !< U U >
+    ! Redefine A_up and A_dn
+    do j = 1, n 
+       do i = 1, n
+          un = sqrt(U(S%Map(i))*U(S%Map(j)))
+          A_up(i,j) = un * (P0%up(i)*P0%up(j) - G_up(i,j)*G_up(j,i))
+          A_dn(i,j) = un * (P0%dn(i)*P0%dn(j) - G_dn(i,j)*G_dn(j,i))
+       enddo
+       A_up(j,j) = P0%up(j) * U(S%Map(j))
+       A_dn(j,j) = P0%dn(j) * U(S%Map(j))
+    enddo
+    ! Compute UU contribution to Cv
+    do j = 1, n 
+       do i = 1, n
+          P0%meas(P0_CV,tmp) = P0%meas(P0_CV,tmp) + A_up(i,j)*A_dn(i,j)
+       enddo
+    enddo
+
+    ! Scale by inverse T
+    P0%meas(P0_CV, tmp) = P0%beta * P0%beta * P0%meas(P0_CV, tmp)
+
+    !===========================!
+    ! spin and pair corelations !
+    !===========================!
+    ! To calculate AF structure between individual orbital-orbital contribution
+    ! map site index in the unit cell to orbital c1,c2,f1,f2 of inhomo PAM
+    select case (model)
+      ! hubbard square
+      ! 250522 for 3band model
+      case (0)
+        correction = 3
+        allocate(cf(3))
+        cf = (/ 1,2,3 /)
+
+      ! conventional PAM square
+      case (1)
+        correction = 2
+        allocate(cf(2))
+        cf = (/ 1,2 /)
+
+      ! staggered PAM square, 8 site unit cell
+      ! 0,2,4,6 are c orbs and 1,3,5,7 are f orbs
+      ! map to orbital order: c1,c2,f1,f2
+      case (2)
+        correction = 2
+        allocate(cf(8))
+        cf = (/ 1,3,2,4,2,4,1,3 /)
+
+      ! PAM coupled with additional f-orbital
+      ! unit cell from bottom to top: c,f,f1 orbs
+      case (3)
+        correction = 3
+        allocate(cf(3))
+        cf = (/ 1,2,3 /)
+
+      ! for stacked two PAMs coupled with additional V12
+      ! unit cell from bottom to top: c1,f1,f2,c2 orbs
+      ! map to orbital order: c1,f1,f2,c2
+      case (4)
+        correction = 4
+        allocate(cf(4))
+        cf = (/ 1,2,3,4 /)
+
+      ! unit cell from bottom to top: c1,f1,c2,f2 orbs
+      case (5)
+        correction = 4
+        allocate(cf(4))
+        cf = (/ 1,2,3,4 /)
+
+      ! unit cell from top to bottom: f2,c2,f1,c1,f1,c2 orbs
+      case (6)
+        correction = 6
+        allocate(cf(6))
+        cf = (/ 1,2,3,4,5,6 /)
+
+      ! bilayer square that can differ
+      case (7)
+        correction = 2
+        allocate(cf(2))
+        cf = (/ 1,2 /)
+
+      ! 1cell with each site is inequivalent
+      case (8)
+        correction = n
+    end select
+
+    do i = 1,n
+       ! For computing FM structure factor for two sublattice in plane
+       ! first get the cartesian coordinates of site i
+       ! Note i-1 accounts for the different convention of labelling site
+       x1 = P0%cartpos(1,i-1)
+       y1 = P0%cartpos(2,i-1)
+       z1 = P0%cartpos(3,i-1)
+
+       do j = 1,n
+          var1 = G_up(i,j) * G_up(j,i) + G_dn(i,j) * G_dn(j,i)
+          var2 = -TWO * G_up(i,j) * G_dn(j,i)
+          var3 = G_up(i,i) * G_up(j,j) + G_dn(i,i) * G_dn(j,j) - &
+                 TWO * G_up(i,i) * G_dn(j,j) - var1
+          var4 = P0%up(i)*P0%up(j) + P0%dn(i)*P0%dn(j) - var1         
+ 
+          ! k is the index
+          k = S%D(i,j)
+          ph = S%gf_phase(i,j)
+          P0%G_fun(k, tmp) = P0%G_fun(k, tmp) + ph*(G_up(i,j) + G_dn(i,j))
+          P0%Gf_up(k, tmp) = P0%Gf_up(k, tmp) + ph*G_up(i,j) 
+          P0%Gf_dn(k, tmp) = P0%Gf_dn(k, tmp) + ph*G_dn(i,j)
+          P0%Den0(k, tmp)  = P0%Den0(k, tmp) + var4
+          P0%Den1(k, tmp)  = P0%Den1(k, tmp) + P0%up(i)*P0%dn(j)
+          P0%SpinXX(k, tmp) = P0%SpinXX(k, tmp) + var2
+          P0%SpinZZ(k, tmp) = P0%SpinZZ(k, tmp) + var3
+          
+          ! Sept.8,2023:
+          ! for the model for bilayer 2orb of La3Ni2O7 
+          ! dx2y2-dz2-dz2-dx2y2 model, similar to stacked two PAM model: c1-f1-f2-c2
+          ! change to compute interlayer dz2-dz2 s-wave pairing, 
+          ! which is Gup(1i,1j)*Gup(2i,2j), where i and j denote site in each layer
+          ! and 1 and 2 are layer index
+          
+          if (model==4) then
+              z2 = P0%cartpos(3,j-1)
+              
+              if ( abs(z1-1.d0)<1.d-6 .and. abs(z2-1.d0)<1.d-6) then
+                  P0%Pair(k,tmp)  = P0%Pair(k,tmp) + G_up(i,j)*G_dn(i+1,j+1)
+              endif
+              
+          else
+              P0%Pair(k,tmp)  = P0%Pair(k,tmp) + G_up(i,j) * G_dn(i,j)
+              ! Below for 3band d-wave, more definition in WeiWu's 2019 PRX
+              if (mod(i-1,3)==0 .and. mod(j-1,3)==0) then
+                  do al2 = 1, 3
+                    do al3 = 1, 3
+                        ire = i+al2-1
+                        jre = j+al3-1
+                        k = S%D(ire,jre)
+                        do al1 = 1, 3
+                           do al4 = 1, 3
+                              a16 =  G_dn(P0%rt(i, al4), P0%rt(j, al1)) - G_dn(P0%rt(i, al4), P0%top(j, al1))  &
+                                    +G_dn(P0%rt(i, al4), P0%lf(j, al1)) - G_dn(P0%rt(i, al4), P0%bot(j, al1))  &
+                                    -G_dn(P0%top(i, al4), P0%rt(j, al1)) + G_dn(P0%top(i, al4), P0%top(j, al1))  &
+                                    -G_dn(P0%top(i, al4), P0%lf(j, al1)) + G_dn(P0%top(i, al4), P0%bot(j, al1))  &
+                                    +G_dn(P0%lf(i, al4), P0%rt(j, al1)) - G_dn(P0%lf(i, al4), P0%top(j, al1))  &
+                                    +G_dn(P0%lf(i, al4), P0%lf(j, al1)) - G_dn(P0%lf(i, al4), P0%bot(j, al1))  &
+                                    -G_dn(P0%bot(i, al4), P0%rt(j, al1)) + G_dn(P0%bot(i, al4), P0%top(j, al1))  &
+                                    -G_dn(P0%bot(i, al4), P0%lf(j, al1)) + G_dn(P0%bot(i, al4), P0%bot(j, al1)) 
+                              ! 250522 follow the Pd definition in tdm.F90
+                              a16 = a16*0.5_wp*0.25
+                              P0%Paird(k,tmp)  = P0%Paird(k,tmp) + G_up(ire,jre) * a16
+                           enddo
+                        enddo
+                     enddo
+                  enddo
+             endif
+          endif
+         !  write(*,*) ""
+           ! recover k for other quantities
+           k = S%D(i,j)
+         ! if (P0%compSAF) then
+         !    var1 = S%P(i)*S%P(j)
+             P0%meas(P0_SAFx, tmp) = P0%meas(P0_SAFx, tmp) + S%AFphase(k) * var2
+             P0%meas(P0_SAFz, tmp) = P0%meas(P0_SAFz, tmp) + S%AFphase(k) * var3
+
+             ! CDW related quantities also in plane
+             ! <n_i*n_j>
+             P0%meas(P0_NNPROD, tmp) = P0%meas(P0_NNPROD, tmp) + &
+                   S%AFphase(k)* (var4 + P0%up(i)*P0%dn(j) + P0%dn(i)*P0%up(j)) 
+         !     <n_i+n_j>, seems not necessary for staggered potential and/or other projects
+         !     P0%meas(P0_NNSUM, tmp)  = P0%meas(P0_NNSUM, tmp) + S%AFphase(k)* (P0%up(i)+P0%dn(i)+P0%up(j)+P0%dn(j))
+         !   end if
+
+           ! (pi,0) structure factor calculation
+           P0%meas(P0_S0pix, tmp) = P0%meas(P0_S0pix, tmp) + S%pi0phase(k) * var2
+           P0%meas(P0_S0piz, tmp) = P0%meas(P0_S0piz, tmp) + S%pi0phase(k) * var3
+
+           ! Start computing FM structure factor for two sublattice in plane
+           x2 = P0%cartpos(1,j-1)
+           y2 = P0%cartpos(2,j-1)
+           z2 = P0%cartpos(3,j-1)
+
+           ! FM structure factor calculation
+           if (abs(z1-1.)<1.e-4 .and. abs(z2-1.)<1.e-4) then
+             ! separation limitation:
+             if (mod(int(x1-x2+y1-y2),2)==0) then
+               ! one sublattice
+               if (mod(int(x1+y1),2)==0) then
+                 P0%meas(P0_SFMx_sub1, tmp) = P0%meas(P0_SFMx_sub1, tmp) + var2
+                 P0%meas(P0_SFMz_sub1, tmp) = P0%meas(P0_SFMz_sub1, tmp) + var3
+
+               ! the other sublattice
+               else
+                 P0%meas(P0_SFMx_sub2, tmp) = P0%meas(P0_SFMx_sub2, tmp) + var2
+                 P0%meas(P0_SFMz_sub2, tmp) = P0%meas(P0_SFMz_sub2, tmp) + var3
+               endif
+             endif
+           endif
+            !write(*,*) 'p5'
+           !========================================================!
+           ! Compute AF structure factor of all spin correlations   !
+           ! Ref: similar to PRB 97, 085123 (2018) Eq.11 but AF here
+           !========================================================!
+          if (model>0 .and. model<8) then
+           ! +1 because the code uses site index from 0
+           o1 = int(S%vecClass(k,1))+1
+           o2 = int(S%vecClass(k,2))+1
+
+           ! The code assumes all correlations (i,j)=(j,i) so always o2>=o1
+           ! Hence in case of o2/=o1, need divided by 2 for (i,j) (same as (j,i))
+           if (cf(o1)==cf(o2)) then
+             P0%Cspinxx(cf(o1),cf(o2),tmp) = P0%Cspinxx(cf(o1),cf(o2),tmp) + S%AFphase(k) *var2
+             P0%Cspinzz(cf(o1),cf(o2),tmp) = P0%Cspinzz(cf(o1),cf(o2),tmp) + S%AFphase(k) *var3
+           else
+             P0%Cspinxx(cf(o1),cf(o2),tmp) = P0%Cspinxx(cf(o1),cf(o2),tmp) + 0.5 * S%AFphase(k) *var2
+             P0%Cspinzz(cf(o1),cf(o2),tmp) = P0%Cspinzz(cf(o1),cf(o2),tmp) + 0.5 * S%AFphase(k) *var3
+             P0%Cspinxx(cf(o2),cf(o1),tmp) = P0%Cspinxx(cf(o2),cf(o1),tmp) + 0.5 * S%AFphase(k) *var2
+             P0%Cspinzz(cf(o2),cf(o1),tmp) = P0%Cspinzz(cf(o2),cf(o1),tmp) + 0.5 * S%AFphase(k) *var3
+           endif
+
+           !========================================================!
+           ! Compute charge structure factor                        !
+           ! Ref: similar to PRL 110, 246401 (2013) Eq.2            !
+           !========================================================!
+           ! add up*dn+dn*up terms to var4
+           var4 = var4 + P0%up(i)*P0%dn(j) + P0%dn(i)*P0%up(j)
+
+           ! The code assumes all correlations (i,j)=(j,i) so always o2>=o1
+           ! Hence in case of o2/=o1, need divided by 2 for (i,j) (same as (j,i))
+           if (cf(o1)==cf(o2)) then
+             P0%Ccharge(cf(o1),cf(o2),tmp) = P0%Ccharge(cf(o1),cf(o2),tmp) + S%AFphase(k) *var4
+           else
+             P0%Ccharge(cf(o1),cf(o2),tmp) = P0%Ccharge(cf(o1),cf(o2),tmp) + 0.5 * S%AFphase(k) *var4
+             P0%Ccharge(cf(o2),cf(o1),tmp) = P0%Ccharge(cf(o2),cf(o1),tmp) + 0.5 * S%AFphase(k) *var4
+           endif
+          endif
+
+           !======================================================================!
+           ! Further compute n*n and n+n for <(n-<n>)*(n-<n>)> of staggered PAM   !
+           ! Ref: similar to PRL 110, 246401 (2013) Eq.2                          !
+           !======================================================================!
+           if (model<7) then  
+             var5 = P0%up(i) + P0%dn(i) + P0%up(j) + P0%dn(j)
+
+             ! consider exp*{separation*pi}
+             if (mod(int(x1-x2+y1-y2),2)==0) then
+               ! (nc+nf)*(nc+nf):
+               P0%Snnprod(1,tmp) = P0%Snnprod(1,tmp) + var4
+               P0%Snnsum (1,tmp) = P0%Snnsum (1,tmp) + var5
+               ! c orbital:
+               if (abs(z1)<1.e-4 .and. abs(z2)<1.e-4) then
+                 P0%Snnprod(2,tmp) = P0%Snnprod(2,tmp) + var4
+                 P0%Snnsum (2,tmp) = P0%Snnsum (2,tmp) + var5
+               ! f orbital:
+               elseif (abs(z1-1.)<1.e-4 .and. abs(z2-1.)<1.e-4) then
+                 P0%Snnprod(3,tmp) = P0%Snnprod(3,tmp) + var4
+                 P0%Snnsum (3,tmp) = P0%Snnsum (3,tmp) + var5
+               endif
+             else
+               ! (nc+nf)*(nc+nf):
+               P0%Snnprod(1,tmp) = P0%Snnprod(1,tmp) - var4
+               P0%Snnsum (1,tmp) = P0%Snnsum (1,tmp) - var5
+               ! c orbital:
+               if (abs(z1)<1.e-4 .and. abs(z2)<1.e-4) then
+                 P0%Snnprod(2,tmp) = P0%Snnprod(2,tmp) - var4
+                 P0%Snnsum (2,tmp) = P0%Snnsum (2,tmp) - var5
+               ! f orbital:
+               elseif (abs(z1-1.)<1.e-4 .and. abs(z2-1.)<1.e-4) then
+                 P0%Snnprod(3,tmp) = P0%Snnprod(3,tmp) - var4
+                 P0%Snnsum (3,tmp) = P0%Snnsum (3,tmp) - var5
+               endif
+             endif
+           endif
+       end do
+
+       ! special case for (i,i) due to additional Wick contraction terms
+       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+       ! Whenever there is G*G terms appears, need consider this correction
+       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+       k = S%D(i,i)
+       var1 =  G_up(i,i) + G_dn(i,i)
+       P0%Den0(k, tmp)   = P0%Den0(k, tmp)   + var1
+       P0%SpinXX(k, tmp) = P0%SpinXX(k, tmp) + var1
+       P0%SpinZZ(k, tmp) = P0%SpinZZ(k, tmp) + var1
+      
+       ! Sept.8,2023:
+       ! for the model for bilayer 2orb of La3Ni2O7 
+       ! dx2y2-dz2-dz2-dx2y2 model, similar to stacked two PAM model: c1-f1-f2-c2
+       ! change to compute interlayer dz2-dz2 s-wave pairing, 
+       ! which is Gup(1i,1j)*Gup(2i,2j), where i and j denote site in each layer
+       ! and 1 and 2 are layer index
+       ! Here only interested in non-local pairing correlation so that below not
+       ! necessary to modify
+       ! local correction for s-wave 
+       P0%Pair(k, tmp) = P0%Pair(k, tmp) - var1 + 1.d0
+          
+       ! Need S%AFphase(k) because some layers it is zero instead of one
+       ! because e.g. only need Saf for f-electrons
+       P0%meas(P0_SAFx, tmp) = P0%meas(P0_SAFx, tmp) + S%AFphase(k) *var1
+       P0%meas(P0_SAFz, tmp) = P0%meas(P0_SAFz, tmp) + S%AFphase(k) *var1
+
+       ! (pi,0) structure factor calculation
+       P0%meas(P0_S0pix, tmp) = P0%meas(P0_S0pix, tmp) + var1
+       P0%meas(P0_S0piz, tmp) = P0%meas(P0_S0piz, tmp) + var1
+
+       ! Additional term for FM structure factor calculation
+       if (abs(z1-1.)<1.e-4) then
+          ! one sublattice
+          if (mod(int(x1+y1),2)==0) then
+             P0%meas(P0_SFMx_sub1, tmp) = P0%meas(P0_SFMx_sub1, tmp) + var1
+             P0%meas(P0_SFMz_sub1, tmp) = P0%meas(P0_SFMz_sub1, tmp) + var1
+
+          ! the other sublattice
+          else
+             P0%meas(P0_SFMx_sub2, tmp) = P0%meas(P0_SFMx_sub2, tmp) + var1
+             P0%meas(P0_SFMz_sub2, tmp) = P0%meas(P0_SFMz_sub2, tmp) + var1
+          endif
+       endif
+
+       ! Additional term for all structure factor calculation
+       ! Need S%AFphase(k) because some layers it is zero instead of one
+       ! because e.g. only need Saf for f-electrons
+      if (model>0 .and. model<8) then
+       o1 = int(S%vecClass(k,1))+1
+       P0%Cspinxx(cf(o1),cf(o1),tmp) = P0%Cspinxx(cf(o1),cf(o1),tmp) + S%AFphase(k) *var1
+       P0%Cspinzz(cf(o1),cf(o1),tmp) = P0%Cspinzz(cf(o1),cf(o1),tmp) + S%AFphase(k) *var1
+       P0%Ccharge(cf(o1),cf(o1),tmp) = P0%Ccharge(cf(o1),cf(o1),tmp) + S%AFphase(k) *var1
+      endif
+
+       ! Correction for n*n similar to Ccharge
+       if (model<7) then
+          ! (nc+nf)*(nc+nf):
+          P0%Snnprod(1,tmp) = P0%Snnprod(1,tmp) + var1
+          ! c orbital:
+          if (abs(z1)<1.e-4) then
+            P0%Snnprod(2,tmp) = P0%Snnprod(2,tmp) + var1
+          ! f orbital:
+          elseif (abs(z1-1.)<1.e-4) then
+            P0%Snnprod(3,tmp) = P0%Snnprod(3,tmp) + var1
+          endif
+       endif
+
+       P0%meas(P0_NNPROD, tmp) = P0%meas(P0_NNPROD, tmp) + S%AFphase(k) *var1
+    end do
+
+    P0%meas(P0_SFERRO, tmp) = sum(P0%SpinXX(:,tmp))
+    P0%meas(P0_SFER2,  tmp) = sum(P0%SpinZZ(:,tmp))
+    P0%meas(P0_PAIR,   tmp) = sum(P0%Pair(:,tmp))
+    P0%meas(P0_PAIRd,   tmp) = sum(P0%Paird(:,tmp))
+
+    P0%meas(P0_CDW, tmp) = P0%meas(P0_NNPROD, tmp) !- P0%meas(P0_NNSUM, tmp)*P0%meas(P0_DENSITY,tmp)
+    
+    ! Average
+    P0%meas(:,tmp) = P0%meas(:,tmp) / n
+
+   if (model>0 .and. model<8) then
+    ! correction accounts for actual number of site pairs for Cspin and Ccharge
+    P0%Cspinxx(:,:,tmp) = P0%Cspinxx(:,:,tmp) / (n/correction)
+    P0%Cspinzz(:,:,tmp) = P0%Cspinzz(:,:,tmp) / (n/correction)
+    P0%Ccharge(:,:,tmp) = P0%Ccharge(:,:,tmp) / (n/correction)
+   endif
+!write(*,*) 'p6'
+    if (model<7) then
+      P0%Snnprod(:,tmp) = P0%Snnprod(:,tmp) / (n/correction)
+      P0%Snnsum (:,tmp) = P0%Snnsum (:,tmp) / (n/correction)
+    endif
+
+    do i = 1, P0%nClass
+       P0%G_fun (i, tmp) = P0%G_fun (i, tmp) / S%F(i) * HALF
+       P0%Gf_up (i, tmp) = P0%Gf_up (i, tmp) / S%F(i)
+       P0%Gf_dn (i, tmp) = P0%Gf_dn (i, tmp) / S%F(i)
+       P0%SpinXX(i, tmp) = P0%SpinXX(i, tmp) / S%F(i)
+       P0%SpinZZ(i, tmp) = P0%SpinZZ(i, tmp) / S%F(i)
+       P0%Den0  (i, tmp) = P0%Den0  (i, tmp) / S%F(i) * HALF
+       P0%Den1  (i, tmp) = P0%Den1  (i, tmp) / S%F(i)
+       P0%Pair  (i, tmp) = P0%Pair  (i, tmp) / S%F(i)
+       P0%Paird (i, tmp) = P0%Paird (i, tmp) / S%F(i)
+       P0%Mloc  (i, tmp) = P0%Mloc  (i, tmp) / S%F(i)
+       P0%Ndou  (i, tmp) = P0%Ndou  (i, tmp) / S%F(i)
+       P0%Eloc  (i, tmp) = P0%Eloc  (i, tmp) / S%F(i)
+    end do
+
+!    if (P0%compSAF) then
+       P0%meas(P0_SAFx2, tmp) = P0%meas(P0_SAFx, tmp) * P0%meas(P0_SAFx, tmp)
+       P0%meas(P0_SAFz2,tmp) = P0%meas(P0_SAFz,tmp) * P0%meas(P0_SAFz,tmp)
+!    end if
+
+    ! Accumulate result to P0(:, idx)
+    sgn = sgnup * sgndn
+    P0%meas(:, idx) =  P0%meas(:, idx) + P0%meas(:, tmp) * sgn
+
+   if (model>0 .and. model<8) then
+    P0%Cspinxx(:,:,idx) = P0%Cspinxx(:,:,idx)  &
+                        + P0%Cspinxx(:,:,tmp) * sgn
+    P0%Cspinzz(:,:,idx) = P0%Cspinzz(:,:,idx)  &
+                        + P0%Cspinzz(:,:,tmp) * sgn
+    P0%Ccharge(:,:,idx) = P0%Ccharge(:,:,idx)  &
+                        + P0%Ccharge(:,:,tmp) * sgn
+   endif
+
+   if (model<8) then
+    P0%Snnprod(:,idx) = P0%Snnprod(:,idx)  &
+                        + P0%Snnprod(:,tmp) * sgn
+    P0%Snnsum (:,idx) = P0%Snnsum (:,idx)  &
+                        + P0%Snnsum (:,tmp) * sgn
+   endif
+    ! 250522 sum tmp data into idx with sign
+    m = P0%nClass
+    call blas_daxpy(m, sgn, P0%G_fun (1:m,tmp), 1, P0%G_fun (1:m,idx), 1)
+    call blas_daxpy(m, sgn, P0%Gf_up (1:m,tmp), 1, P0%Gf_up (1:m,idx), 1)
+    call blas_daxpy(m, sgn, P0%Gf_dn (1:m,tmp), 1, P0%Gf_dn (1:m,idx), 1)
+    call blas_daxpy(m, sgn, P0%SpinXX(1:m,tmp), 1, P0%SpinXX(1:m,idx), 1)
+    call blas_daxpy(m, sgn, P0%SpinZZ(1:m,tmp), 1, P0%SpinZZ(1:m,idx), 1)
+    call blas_daxpy(m, sgn, P0%Den0  (1:m,tmp), 1, P0%Den0  (1:m,idx), 1)
+    call blas_daxpy(m, sgn, P0%Den1  (1:m,tmp), 1, P0%Den1  (1:m,idx), 1)
+    call blas_daxpy(m, sgn, P0%Pair  (1:m,tmp), 1, P0%Pair  (1:m,idx), 1)
+    call blas_daxpy(m, sgn, P0%Paird (1:m,tmp), 1, P0%Paird (1:m,idx), 1)
+    call blas_daxpy(m, sgn, P0%Mloc  (1:m,tmp), 1, P0%Mloc  (1:m,idx), 1)
+    call blas_daxpy(m, sgn, P0%Ndou  (1:m,tmp), 1, P0%Ndou  (1:m,idx), 1)
+    call blas_daxpy(m, sgn, P0%Eloc  (1:m,tmp), 1, P0%Eloc  (1:m,idx), 1)
+
+    P0%sign(P0_SGN,   idx) =  P0%sign(P0_SGN,   idx) + sgn
+    P0%sign(P0_SGNUP, idx) =  P0%sign(P0_SGNUP, idx) + sgnup
+    P0%sign(P0_SGNDN, idx) =  P0%sign(P0_SGNDN, idx) + sgndn
+    P0%cnt = P0%cnt + 1
+
+  end subroutine DQMC_Phy_Meas
+
+  !--------------------------------------------------------------------!
+
+  subroutine DQMC_Phy_Avg(P0)
+    !
+    ! Purpose
+    ! =======
+    !    This subroutine averges the data with a bin.
+    !    It also computes some measurements from others, such as
+    !    density and energy.
+    !
+    !  Pre-assumption
+    ! ==============
+    !    idx is in the range of (1,nClass).
+    !
+    ! Arguments
+    ! =========
+    !
+    type(Phy), intent(inout) :: P0     ! Phy
+    
+    ! ... local scalar ...
+    real(wp) :: factor, var1, var2, var3, var4
+    integer  :: idx, n, k
+
+    ! ... Executable ...
+    idx = P0%idx
+
+    ! compute the normalization factor = 1/cnt
+    if (P0%cnt == 0) then
+       call DQMC_Error("Phy normalize: cnt = 0", 0)
+    end if
+    factor = ONE / P0%cnt
+
+    ! average
+    P0%meas(:, idx) = P0%meas(:, idx) * factor
+    P0%sign(:, idx) = P0%sign(:, idx) * factor
+
+    P0%Cspinxx(:,:,idx) = P0%Cspinxx(:,:,idx) * factor
+    P0%Cspinzz(:,:,idx) = P0%Cspinzz(:,:,idx) * factor
+    P0%Ccharge(:,:,idx) = P0%Ccharge(:,:,idx) * factor
+    P0%Snnprod(:,idx) = P0%Snnprod(:,idx) * factor
+    P0%Snnsum (:,idx) = P0%Snnsum (:,idx) * factor
+
+!    if (P0%compSAF) then
+       ! The sqaure terms
+       P0%meas(P0_SAFx2, idx) = sqrt(abs(P0%meas(P0_SAFx2, idx)))
+       P0%meas(P0_SAFz2, idx) = sqrt(abs(P0%meas(P0_SAFz2, idx)))
+!    end if
+
+    ! This list terms
+    n = P0%nClass
+    call blas_dscal(n, factor, P0%G_fun (1:n, idx), 1)
+    call blas_dscal(n, factor, P0%Gf_up (1:n, idx), 1)
+    call blas_dscal(n, factor, P0%Gf_dn (1:n, idx), 1)
+    call blas_dscal(n, factor, P0%SpinXX(1:n, idx), 1)
+    call blas_dscal(n, factor, P0%SpinZZ(1:n, idx), 1)
+    call blas_dscal(n, factor, P0%Den0  (1:n, idx), 1)
+    call blas_dscal(n, factor, P0%Den1  (1:n, idx), 1)
+    call blas_dscal(n, factor, P0%Pair  (1:n, idx), 1)
+    call blas_dscal(n, factor, P0%Paird (1:n, idx), 1)
+    call blas_dscal(n, factor, P0%Mloc  (1:n, idx), 1)
+    call blas_dscal(n, factor, P0%Ndou  (1:n, idx), 1)
+   ! call blas_dscal(n, factor, P0%Eloc  (1:n, idx), 1)
+
+    ! calculate local entanglement entropy
+    do k = 1, n
+      var1 = P0%Ndou(k, idx)
+      var2 = 1.0d0 - P0%Gf_up(k, idx) - var1
+      var3 = 1.0d0 - P0%Gf_dn(k, idx) - var1
+      var4 = 1.0d0 - var1 - var2 - var3
+      P0%Eloc(k, idx) = - var1*log(var1) - var2*log(var2) &
+                        - var3*log(var3) - var4*log(var4)
+    enddo
+
+    !write(*,*) 'DQMC_Phy_Avg var4= ', var4, ", Eloc=", P0%Eloc(1,idx)
+
+    ! Change bin
+    P0%idx = P0%idx + 1
+
+    ! reset the counter
+    p0%cnt = 0
+
+  end subroutine DQMC_Phy_Avg
+
+  !--------------------------------------------------------------------!
+
+  subroutine DQMC_Phy_GetErr(P0)
+    use dqmc_mpi
+    !
+    ! Purpose
+    ! =======
+    !    This subroutine computes the average and errors
+    !    of measurements. 
+    !
+    ! Argument
+    ! ========
+    !
+    type(Phy), intent(inout) :: P0
+
+    ! ... Local Scalar ...
+    integer  :: i, j, n
+    integer  :: avg, err, mpi_err
+    integer  :: nproc
+
+    ! ... Local Array
+    real(wp) :: sum_sgn, sgn(P0%nBin), y(P0%nBin), data(P0%nBin)
+    
+    ! ... Executable ...
+    n   = P0%nBin
+    avg = P0%avg
+    err = P0%err
+    nproc = qmc_sim%size
+
+    if (nproc == 1) then
+
+       ! Average sign, sign up, sign down
+       do i = P0_SGNUP, P0_SGNDN
+          data = P0%sign(i, 1:n)
+          call DQMC_JackKnife(n, P0%sign(i, avg), P0%sign(i, err), data, &
+               y, sgn, sum_sgn)
+       end do
+       
+       data = P0%sign(P0_SGN, 1:n)
+       call DQMC_JackKnife(n, P0%sign(P0_SGN, avg), P0%sign(P0_SGN, err), data, &
+            y, sgn, sum_sgn)
+       
+       ! Average other single terms
+       do i = 1, P0%nMeas
+          data = P0%meas(i, 1:n)
+          call DQMC_SignJackKnife(n, P0%meas(i, avg), P0%meas(i, err), data, &
+               y, sgn, sum_sgn)
+       end do
+       
+       ! Average Green function
+       do i = 1, P0%nClass
+          data =  P0%G_fun(i, 1:n)
+          call DQMC_SignJackKnife(n, P0%G_fun(i, avg), P0%G_fun(i, err), &
+               data, y, sgn, sum_sgn)
+       end do
+ 
+       ! Up Green function
+       do i = 1, P0%nClass
+          data =  P0%Gf_up(i, 1:n)
+          call DQMC_SignJackKnife(n, P0%Gf_up(i, avg), P0%Gf_up(i, err), &
+               data, y, sgn, sum_sgn)
+       end do
+       
+       ! Down Green function
+       do i = 1, P0%nClass
+          data =  P0%Gf_dn(i, 1:n)
+          call DQMC_SignJackKnife(n, P0%Gf_dn(i, avg), P0%Gf_dn(i, err), &
+               data, y, sgn, sum_sgn)
+       end do
+       
+       ! Average correlated Density 
+       do i = 1, P0%nClass
+          data = P0%Den0(i, 1:n)
+          call DQMC_SignJackKnife(n, P0%Den0(i, avg), P0%Den0(i, err), &
+               data, y, sgn, sum_sgn)
+       end do
+       
+       do i = 1, P0%nClass
+          data = P0%Den1(i, 1:n)
+          call DQMC_SignJackKnife(n, P0%Den1(i, avg), P0%Den1(i, err), &
+               data, y, sgn, sum_sgn)
+       end do
+       
+       ! Average spin
+       do i = 1, P0%nClass
+          data = P0%SpinXX(i, 1:n)
+          call DQMC_SignJackKnife(n, P0%SpinXX(i, avg), P0%SpinXX(i, err), &
+               data, y, sgn, sum_sgn)
+       end do
+       
+       do i = 1, P0%nClass
+          data = P0%SpinZZ(i, 1:n)
+          call DQMC_SignJackKnife(n, P0%SpinZZ(i, avg), P0%SpinZZ(i, err), &
+               data, y, sgn, sum_sgn)
+       end do
+
+       do i = 1, P0%nClass
+          P0%AveSpin(i, 1:n) = ( P0%SpinZZ(i, 1:n) + 2.d0*P0%SpinXX(i, 1:n) ) / 3.d0
+          data = P0%AveSpin(i, 1:n)
+          call DQMC_SignJackKnife(n, P0%AveSpin(i, avg), P0%AveSpin(i, err), &
+               data, y, sgn, sum_sgn)
+       end do
+
+       ! Pairing
+       do i = 1, P0%nClass
+          data = P0%Pair(i, 1:n)
+          call DQMC_SignJackKnife(n, P0%Pair(i, avg), P0%Pair(i, err), &
+               data, y, sgn, sum_sgn)
+       end do
+
+       ! 250522 d-wave pairing
+       do i = 1, P0%nClass
+          data = P0%Paird(i, 1:n)
+          call DQMC_SignJackKnife(n, P0%Paird(i, avg), P0%Paird(i, err), &
+               data, y, sgn, sum_sgn)
+       end do
+
+       ! local moment
+       do i = 1, P0%nClass
+          data = P0%Mloc(i, 1:n)
+          call DQMC_SignJackKnife(n, P0%Mloc(i, avg), P0%Mloc(i, err), &
+               data, y, sgn, sum_sgn)
+       end do
+
+       ! local double occupancy
+       do i = 1, P0%nClass
+          data = P0%Ndou(i, 1:n)
+          call DQMC_SignJackKnife(n, P0%Ndou(i, avg), P0%Ndou(i, err), &
+               data, y, sgn, sum_sgn)
+       end do
+
+       ! local entangelment entropy
+       do i = 1, P0%nClass
+          data = P0%Eloc(i, 1:n)
+          call DQMC_SignJackKnife(n, P0%Eloc(i, avg), P0%Eloc(i, err), &
+               data, y, sgn, sum_sgn)
+       end do
+
+       ! spin structure factor between orbitals
+       do i = 1,P0%Ncspin
+         do j = 1,P0%Ncspin
+           data = P0%Cspinxx(i,j,1:n)
+           call DQMC_SignJackKnife(n, P0%Cspinxx(i,j,avg), P0%Cspinxx(i,j,err), &
+               data, y, sgn, sum_sgn)
+           data = P0%Cspinzz(i,j,1:n)
+           call DQMC_SignJackKnife(n, P0%Cspinzz(i,j,avg), P0%Cspinzz(i,j,err), &
+               data, y, sgn, sum_sgn)
+         end do
+       end do
+
+       ! charge structure factor between orbitals
+       do i = 1,P0%Nccharge
+         do j = 1,P0%Nccharge
+           data = P0%Ccharge(i,j,1:n)
+           call DQMC_SignJackKnife(n, P0%Ccharge(i,j,avg), P0%Ccharge(i,j,err), &
+               data, y, sgn, sum_sgn)
+         end do
+       end do
+
+       do i = 1,3
+         data = P0%Snnprod(i,1:n)
+         call DQMC_SignJackKnife(n, P0%Snnprod(i,avg), P0%Snnprod(i,err), &
+             data, y, sgn, sum_sgn)
+         data = P0%Snnsum(i,1:n)
+         call DQMC_SignJackKnife(n, P0%Snnsum(i,avg), P0%Snnsum(i,err), &
+             data, y, sgn, sum_sgn)
+       end do
+
+       ! Store Jackknife in bins
+       do i = 1, n
+          P0%sign(:,i) = (n*P0%sign(:,avg) - P0%sign(:,i)) / dble(n-1)
+          P0%AllProp(:,i) = (sum_sgn*P0%AllProp(:,avg) - P0%AllProp(:,i)) / dble(n-1)
+          P0%Cspinxx(:,:,i) = (sum_sgn*P0%Cspinxx(:,:,avg) - P0%Cspinxx(:,:,i)) / dble(n-1)
+          P0%Cspinzz(:,:,i) = (sum_sgn*P0%Cspinzz(:,:,avg) - P0%Cspinzz(:,:,i)) / dble(n-1)
+          P0%Ccharge(:,:,i) = (sum_sgn*P0%Ccharge(:,:,avg) - P0%Ccharge(:,:,i)) / dble(n-1)
+          P0%Snnprod(:,i) = (sum_sgn*P0%Snnprod(:,avg) - P0%Snnprod(:,i)) / dble(n-1)
+          P0%Snnsum (:,i) = (sum_sgn*P0%Snnsum (:,avg) - P0%Snnsum (:,i)) / dble(n-1)
+          P0%AllProp(:,i) = P0%AllProp(:,i) / P0%sign(P0_SGN,i)
+          P0%Cspinxx(:,:,i) = P0%Cspinxx(:,:,i) / P0%sign(P0_SGN,i)
+          P0%Cspinzz(:,:,i) = P0%Cspinzz(:,:,i) / P0%sign(P0_SGN,i)
+          P0%Ccharge(:,:,i) = P0%Ccharge(:,:,i) / P0%sign(P0_SGN,i)
+          P0%Snnprod(:,i) = P0%Snnprod(:,i) / P0%sign(P0_SGN,i)
+          P0%Snnsum (:,i) = P0%Snnsum (:,i) / P0%sign(P0_SGN,i)
+       enddo
+
+       do i = 1,n
+         do j = 1,n
+           P0%AllProp(:,i) = (sum_sgn*P0%AllProp(:,avg) - P0%AllProp(:,i)) / dble(n-1)
+           P0%AllProp(:,i) = P0%AllProp(:,i) / P0%sign(P0_SGN,i)
+         enddo
+       enddo
+
+       ! Deal with error and expectation values of cv and chi_thermal properly
+       P0%meas(P0_CHIT,1:avg) = P0%meas(P0_CHIT,1:avg) - P0%n * P0%beta**2 * P0%meas(P0_ENERGY,1:avg) &
+          * P0%meas(P0_DENSITY,1:avg)
+       P0%meas(P0_CV, 1:avg) = P0%meas(P0_CV, 1:avg) - P0%n * (P0%beta * P0%meas(P0_ENERGY, 1:avg))**2       
+
+       P0%meas(P0_CV, err) = sqrt((n-1) * sum((P0%meas(P0_CV, 1:n) - P0%meas(P0_CV, avg))**2))
+       P0%meas(P0_CHIT, err) = sqrt((n-1) * sum((P0%meas(P0_CHIT, 1:n) - P0%meas(P0_CHIT, avg))**2))
+
+    else
+
+       mpi_err = 0
+
+#      ifdef _QMC_MPI
+         
+          ! note for MPI, each processor has only ONE bin          
+          ! The process below for computing err is JackKnife similar to non-MPI case
+          ! See also DQMC_SignJackKnife_Real in dqmc_util.F90
+
+          !    y_i = (sum(x)-x_i)/sgn_i
+          !    The JackKnife variance of X with sign is defined as 
+          !    
+          !          n-1  
+          !    sqrt(----- *sum(y_i-avg_y)^2))
+          !           n
+          ! 
+          !    where avg_y = sum(y)/n
+ 
+          n = size(P0%AllProp,1)
+
+          !Set bin to 1 and fill the average spin
+          P0%AveSpin(:,1) = ( P0%SpinZZ(:,1) + 2.d0*P0%SpinXX(:,1) ) / 3.d0
+
+          ! Average sign
+          call mpi_allreduce(P0%sign(:,1), P0%sign(:,avg), 3, mpi_double, &
+             mpi_sum, mpi_comm_world, mpi_err)
+
+          ! Compute y_i: y = (sum_x-x(1:n))/sgn(1:n) in DQMC_SignJackKnife_Real
+          call mpi_allreduce(P0%AllProp(:,1), P0%AllProp(:,avg), n, mpi_double, &
+             mpi_sum, mpi_comm_world, mpi_err)
+
+          do i=1,P0%Ncspin
+            call mpi_allreduce(P0%Cspinxx(:,i,1), P0%Cspinxx(:,i,avg), P0%Ncspin, mpi_double, &
+                 mpi_sum, mpi_comm_world, mpi_err)
+            call mpi_allreduce(P0%Cspinzz(:,i,1), P0%Cspinzz(:,i,avg), P0%Ncspin, mpi_double, &
+                 mpi_sum, mpi_comm_world, mpi_err)
+          enddo
+
+          do i=1,P0%Nccharge
+            call mpi_allreduce(P0%Ccharge(:,i,1), P0%Ccharge(:,i,avg), P0%Nccharge, mpi_double, &
+                 mpi_sum, mpi_comm_world, mpi_err)
+          enddo
+
+          call mpi_allreduce(P0%Snnprod(:,1), P0%Snnprod(:,avg), 3, mpi_double, &
+               mpi_sum, mpi_comm_world, mpi_err)
+          call mpi_allreduce(P0%Snnsum (:,1), P0%Snnsum (:,avg), 3, mpi_double, &
+               mpi_sum, mpi_comm_world, mpi_err)
+
+          P0%AllProp(:,1) = (P0%AllProp(:,avg) - P0%AllProp(:,1)) / dble(nproc - 1)
+          P0%Cspinxx(:,:,1) = (P0%Cspinxx(:,:,avg) - P0%Cspinxx(:,:,1)) / dble(nproc - 1)
+          P0%Cspinzz(:,:,1) = (P0%Cspinzz(:,:,avg) - P0%Cspinzz(:,:,1)) / dble(nproc - 1)
+          P0%Ccharge(:,:,1) = (P0%Ccharge(:,:,avg) - P0%Ccharge(:,:,1)) / dble(nproc - 1)
+          P0%Snnprod(:,1) = (P0%Snnprod(:,avg) - P0%Snnprod(:,1)) / dble(nproc - 1)
+          P0%Snnsum (:,1) = (P0%Snnsum (:,avg) - P0%Snnsum (:,1)) / dble(nproc - 1)
+          P0%sign(:,1)    = (P0%sign(:,avg) - P0%sign(:,1)) / dble(nproc - 1)
+          P0%AllProp(:,1) = P0%AllProp(:,1) / P0%sign(P0_SGN,1)
+          P0%Cspinxx(:,:,1) = P0%Cspinxx(:,:,1) / P0%sign(P0_SGN,1)
+          P0%Cspinzz(:,:,1) = P0%Cspinzz(:,:,1) / P0%sign(P0_SGN,1)
+          P0%Ccharge(:,:,1) = P0%Ccharge(:,:,1) / P0%sign(P0_SGN,1)
+          P0%Snnprod(:,1) = P0%Snnprod(:,1) / P0%sign(P0_SGN,1)
+          P0%Snnsum (:,1) = P0%Snnsum (:,1) / P0%sign(P0_SGN,1)
+
+          ! similar to avg = sum_x/sum_sgn step in DQMC_SignJackKnife_Real
+          ! both divided by dble(nproc), below two lines cannot switch 
+          P0%AllProp(:,avg) = P0%AllProp(:,avg) / P0%sign(P0_SGN,avg) 
+          P0%Cspinxx(:,:,avg) = P0%Cspinxx(:,:,avg) / P0%sign(P0_SGN,avg)
+          P0%Cspinzz(:,:,avg) = P0%Cspinzz(:,:,avg) / P0%sign(P0_SGN,avg)
+          P0%Ccharge(:,:,avg) = P0%Ccharge(:,:,avg) / P0%sign(P0_SGN,avg)
+          P0%Snnprod(:,avg) = P0%Snnprod(:,avg) / P0%sign(P0_SGN,avg)
+          P0%Snnsum (:,avg) = P0%Snnsum (:,avg) / P0%sign(P0_SGN,avg)
+          P0%sign(:,avg)    = P0%sign(:,avg) / dble(nproc)
+
+          !i Compute proper chi_thermal and C_v
+          P0%meas(P0_CHIT,1:avg) = P0%meas(P0_CHIT,1:avg) - P0%n * P0%beta**2 * P0%meas(P0_ENERGY,1:avg) &
+             * P0%meas(P0_DENSITY,1:avg)
+          P0%meas(P0_CV,1:avg) = P0%meas(P0_CV,1:avg) - P0%n * (P0%beta * P0%meas(P0_ENERGY,1:avg))**2
+
+          ! Compute error: sum(y_i-avg_y)^2
+          call mpi_allreduce((P0%AllProp(:,1)-P0%AllProp(:,avg))**2, P0%AllProp(:,err), n, mpi_double, &
+             mpi_sum, mpi_comm_world, mpi_err)
+          P0%AllProp(:,err) = sqrt(P0%AllProp(:,err) * dble(nproc-1)/dble(nproc))
+
+          do i=1,P0%Ncspin
+            call mpi_allreduce((P0%Cspinxx(:,i,1)-P0%Cspinxx(:,i,avg))**2, P0%Cspinxx(:,i,err), P0%Ncspin, &
+               mpi_double, mpi_sum, mpi_comm_world, mpi_err)
+            call mpi_allreduce((P0%Cspinzz(:,i,1)-P0%Cspinzz(:,i,avg))**2, P0%Cspinzz(:,i,err), P0%Ncspin, &
+               mpi_double, mpi_sum, mpi_comm_world, mpi_err)
+          enddo
+          P0%Cspinxx(:,:,err) = sqrt(P0%Cspinxx(:,:,err) * dble(nproc-1)/dble(nproc))
+          P0%Cspinzz(:,:,err) = sqrt(P0%Cspinzz(:,:,err) * dble(nproc-1)/dble(nproc))
+
+          do i=1,P0%Nccharge
+            call mpi_allreduce((P0%Ccharge(:,i,1)-P0%Ccharge(:,i,avg))**2, P0%Ccharge(:,i,err), P0%Nccharge, &
+               mpi_double, mpi_sum, mpi_comm_world, mpi_err)
+          enddo
+          P0%Ccharge(:,:,err) = sqrt(P0%Ccharge(:,:,err) * dble(nproc-1)/dble(nproc))
+
+          call mpi_allreduce((P0%Snnprod(:,1)-P0%Snnprod(:,avg))**2, P0%Snnprod(:,err), 3, &
+             mpi_double, mpi_sum, mpi_comm_world, mpi_err)
+          call mpi_allreduce((P0%Snnsum (:,1)-P0%Snnsum (:,avg))**2, P0%Snnsum (:,err), 3, &
+             mpi_double, mpi_sum, mpi_comm_world, mpi_err)
+
+          P0%Snnprod(:,err) = sqrt(P0%Snnprod(:,err) * dble(nproc-1)/dble(nproc))
+          P0%Snnsum (:,err) = sqrt(P0%Snnsum (:,err) * dble(nproc-1)/dble(nproc))
+
+          call mpi_allreduce((P0%sign(:,1)-P0%sign(:,avg))**2, P0%sign(:,err), 3, mpi_double, &
+             mpi_sum, mpi_comm_world, mpi_err)
+          P0%sign(:,err) = sqrt(P0%sign(:,err) * dble(nproc-1)/dble(nproc))
+
+          P0%meas(P0_CHIT,avg) = P0%meas(P0_CHIT,avg) - P0%n * P0%beta**2 * P0%meas(P0_ENERGY,avg) &
+             * P0%meas(P0_DENSITY,avg)
+      
+          P0%meas(P0_CV,avg) = P0%meas(P0_CV,avg) - P0%n * (P0%beta * P0%meas(P0_ENERGY,avg))**2
+
+#      endif
+
+  endif
+
+  end subroutine DQMC_Phy_GetErr
+  
+  !--------------------------------------------------------------------!
+  
+  subroutine DQMC_Phy_Print(P0, S, OPT)
+    use dqmc_mpi
+    !
+    ! Purpose
+    ! =======
+    !    This subroutine prints out the average and errors
+    !    of measurements. Structure S will give labels for
+    !    each autocorrelation terms.
+    !
+    !  Pre-assumption
+    ! ===============
+    !    OPT is a file handle
+    !    DQMC_Phy_GetErr was called.
+    !
+    ! Arguments
+    ! =========
+    !
+    type(Phy), intent(in)    :: P0   ! Phy
+    type(Struct), intent(in)  :: S    ! Underline lattice structure
+    integer, intent(in)       :: OPT  ! Output file handle
+
+    ! ... Local scalar ...
+    integer :: nClass, avg, err
+
+    ! ... Executable ...
+
+   if (qmc_sim%rank /= 0) return
+
+    nClass = P0%nClass
+    avg    = P0%avg
+    err    = P0%err
+
+   
+    ! Scalar terms
+    call DQMC_Print_RealArray(0, 3, "Sign of equal time measurements:", &
+         P0_SIGN_STR, P0%sign(:,avg:avg), P0%sign(:,err:err), OPT)
+    
+    call DQMC_Print_RealArray(0, P0%nmeas, "Equal time measurements:", &
+         P0_STR, P0%meas(:,avg:avg), P0%meas(:,err:err), OPT)
+
+    ! Function terms
+    call DQMC_Print_RealArray(0, nClass, "Mean Equal time Green's function:", &
+         S%clabel, P0%G_fun(:, avg:avg), P0%G_fun(:, err:err), OPT)
+    
+    call DQMC_Print_RealArray(0, nClass, "Up Equal time Green's function:", &
+         S%clabel, P0%Gf_up(:, avg:avg), P0%Gf_up(:, err:err), OPT)
+    
+    call DQMC_Print_RealArray(0, nClass, "Down Equal time Green's function:", &
+         S%clabel, P0%Gf_dn(:, avg:avg), P0%Gf_dn(:, err:err), OPT)
+    
+    call DQMC_Print_RealArray(0, nClass, &
+         "Density-density correlation fn: (up-up)", &
+         S%clabel, P0%Den0(:, avg:avg), P0%Den0(:, err:err), OPT)
+    
+    call DQMC_Print_RealArray(0, nClass, &
+         "Density-density correlation fn: (up-dn)", &
+         S%clabel, P0%Den1(:, avg:avg), P0%Den1(:, err:err), OPT)
+    
+    call DQMC_Print_RealArray(0, nClass, "XX Spin correlation function:", &
+         S%clabel, P0%SpinXX(:, avg:avg), P0%SpinXX(:, err:err), OPT)
+    
+    call DQMC_Print_RealArray(0, nClass, "ZZ Spin correlation function:", &
+         S%clabel, P0%SpinZZ(:, avg:avg), P0%SpinZZ(:, err:err), OPT)
+
+    call DQMC_Print_RealArray(0, nClass, "Average Spin correlation function:", &
+         S%clabel, P0%AveSpin(:, avg:avg), P0%AveSpin(:, err:err), OPT)
+    
+    call DQMC_Print_RealArray(0, nClass, "Pairing correlation function:", &
+         S%clabel, P0%Pair(:, avg:avg), P0%Pair(:, err:err), OPT)
+
+    call DQMC_Print_RealArray(0, nClass, "d-wave Pairing correlation function:", &
+         S%clabel, P0%Paird(:, avg:avg), P0%Paird(:, err:err), OPT)
+    
+  end subroutine DQMC_Phy_Print
+ 
+  !--------------------------------------------------------------------!
+
+  subroutine DQMC_Phy_Print_local(model, P0, ofile, S, OPT)
+    use dqmc_mpi
+    !
+    type(Phy), intent(in)    :: P0   ! Phy
+    type(Struct), intent(in) :: S    ! Underline lattice structure
+    integer, intent(in)      :: model
+    integer                  :: OPT  ! Output file handle
+    integer                  :: i, j, b1, b2
+    character(len=80)        :: ofile
+    character(len=label_len) :: lab
+    real    :: band(S%nClass,4)
+    real(wp) :: x, y
+    integer :: nClass, avg, err
+
+    ! ... Executable ...
+
+   if (qmc_sim%rank /= 0) return
+
+    nClass = P0%nClass
+    avg    = P0%avg
+    err    = P0%err
+
+    call DQMC_open_file('local_orb_'//adjustl(trim(ofile)),'replace', OPT)
+    write(OPT,'(a13)') 'Local moment:'
+    do i = 1, nClass
+      write(lab,*) trim(adjustl(S%clabel(i)))
+      read(lab(1:4),*) band(i,1)
+      read(lab(5:8),*) band(i,2)
+      read(lab(14:25),*) band(i,3)
+      read(lab(26:37),*) band(i,4)
+      b1 = int(band(i,1))
+      b2 = int(band(i,2))
+      x  = real(band(i,3))
+      y  = real(band(i,4))
+
+      if (b1==b2 .and. abs(x)<1.e-5 .and. abs(y)<1.e-5) then
+        write(OPT,'((i4),4(e16.8))') b1, P0%Mloc(i,avg), P0%Mloc(i,err)
+      endif
+    enddo 
+
+    write(OPT,'(a23)') 'Local double occupancy:'
+    do i = 1, nClass
+      write(lab,*) trim(adjustl(S%clabel(i)))
+      read(lab(1:4),*) band(i,1)
+      read(lab(5:8),*) band(i,2)
+      read(lab(14:25),*) band(i,3)
+      read(lab(26:37),*) band(i,4)
+      b1 = int(band(i,1))
+      b2 = int(band(i,2))
+      x  = real(band(i,3))
+      y  = real(band(i,4))
+
+      if (b1==b2 .and. abs(x)<1.e-5 .and. abs(y)<1.e-5) then
+        write(OPT,'((i4),4(e16.8))') b1, P0%Ndou(i,avg), P0%Ndou(i,err)
+      endif
+    enddo
+
+    write(OPT,'(a27)') 'Local entanglement entropy:'
+    do i = 1, nClass
+      write(lab,*) trim(adjustl(S%clabel(i)))
+      read(lab(1:4),*) band(i,1)
+      read(lab(5:8),*) band(i,2)
+      read(lab(14:25),*) band(i,3)
+      read(lab(26:37),*) band(i,4)
+      b1 = int(band(i,1))
+      b2 = int(band(i,2))
+      x  = real(band(i,3))
+      y  = real(band(i,4))
+
+      if (b1==b2 .and. abs(x)<1.e-5 .and. abs(y)<1.e-5) then
+        write(OPT,'((i4),4(e16.8))') b1, P0%Eloc(i,avg), P0%Eloc(i,err)
+      endif
+    enddo
+
+    write(OPT,'(a40)') 'Spin structure factors between orbitals:'
+    write(OPT,'(a)') 'orb1   orb2   Sxx   err   Szz   err'
+    do i = 1,P0%Ncspin
+      do j = 1,P0%Ncspin
+        write(OPT,'(2(i4),4(e16.8))') i,j, &
+              P0%Cspinxx(i,j,avg), P0%Cspinxx(i,j,err), &
+              P0%Cspinzz(i,j,avg), P0%Cspinzz(i,j,err)
+      enddo
+    enddo
+
+    write(OPT,'(a42)') 'Charge structure factors between orbitals:'
+    write(OPT,'(a)') 'orb1   orb2   Sch   err'
+    do i = 1,P0%Nccharge
+      do j = 1,P0%Nccharge
+        write(OPT,'(2(i4),2(e16.8))') i,j, &
+              P0%Ccharge(i,j,avg), P0%Ccharge(i,j,err)
+      enddo
+    enddo
+
+    if (model<7) then
+      !for charge structure factor of c and f of staggered PAM
+      ! nnprod = (nc+nf)*(nc+nf), n_c*n_c, n_f*n_f
+      ! nnsum  = (nc+nf)+(nc+nf), n_c+n_c, n_f+n_f
+      ! S_cdw  = <(n-<n>)*(n-<n>)> so that need nnsum
+      write(OPT,'(a42)') 'nnprod = (nc+nf)*(nc+nf), n_c*n_c, n_f*n_f:'
+      do i = 1,3
+          write(OPT,'((i4),2(e16.8))') i, &
+                P0%Snnprod(i,avg), P0%Snnprod(i,err)
+      enddo
+      write(OPT,'(a42)') 'nnsum  = (nc+nf)+(nc+nf), n_c+n_c, n_f+n_f:'
+      do i = 1,3
+          write(OPT,'((i4),2(e16.8))') i, &
+                P0%Snnsum(i,avg), P0%Snnsum(i,err)
+      enddo
+    endif
+
+  end subroutine DQMC_Phy_Print_local
+ 
+  !--------------------------------------------------------------------!
+
+  subroutine DQMC_Phy_GetFT(P0, class, phase, ft_wgt_t, ft_wgt_g, nkt, nkg, na, nt)
+    !
+    ! Purpose
+    ! =======
+    !    This subroutine computes the FT of the correlation functions
+    !    stored in phy0. It fills the bins transforming the jackknived
+    !    values of the real space correlation functions. The error is
+    !    estimated using the standard jackknife formula.
+    !   
+    ! Comments
+    ! ========
+    !    LAPACK could have been used in, at least, two places but this
+    !    routine is not critical (only called at the end) so that
+    !    having explicit matrix multiplication improves readability
+    !    without degrading performance.
+    !
+    ! Arguments
+    ! =========
+    integer, intent(in)    :: na                  !number of site in primitive cell
+    integer, intent(in)    :: nt                  !number of translations
+    integer, intent(in)    :: nkt,nkg              !number of k-points
+    integer, intent(in)    :: class(na*nt,na*nt)  !classes of pairs of sites
+    integer, intent(in)    :: phase(na*nt,na*nt)  !classes of pairs of sites
+    complex*16, intent(in), target :: ft_wgt_t(nt, nkt)      !fourier weights : exp(ikr)
+    complex*16, intent(in), target :: ft_wgt_g(nt, nkg)    !fourier weights : exp(ikr)
+    type(Phy), intent(inout) :: P0                  !container
+
+    ! ... Local variables ...
+    real(wp) :: rwork(3*na), phcurr
+    real(wp), pointer :: curr(:) 
+    real(wp), pointer :: currft(:) 
+    integer :: ph(na*nt,na*nt)
+    integer :: nak, ip, ibin, nBin
+    integer :: avg, err, ia, ja, ik, i, j, it, nk, jt
+    complex*16 ::  work(2*na), U(na,na), W(na,na)
+    complex*16, pointer :: ft_wgt(:,:) 
+    complex*16, parameter :: ZEROZ=(0.d0, 0.d0), ONEZ=(1.d0, 0.d0)
+
+    nBin = P0%nBin
+    avg  = P0%avg
+    err  = P0%err
+    nk   = max(nkt, nkg)
+    nak  = na * nk
+ 
+    !Initialize pointers to Fourier transform
+    do ip = 1, narrays + 1 
+       P0%IARREV(ip) = (ip-1)*nak + 1
+       P0%IARRFT(ip) = (ip-1)*nak*(na+1)/2 + 1
+    enddo
+
+    !Allocate storage for Fourier transform
+    allocate(P0%AllPropFT(nak*(na+1)*narrays/2, P0%err))
+    allocate(P0%AllPropEigVal(nak*narrays, P0%err))
+    allocate(P0%AllPropEigVec(na, na, nk, narrays))
+    P0%initFT = .true.
+
+    !Loop over properties to Fourier transform
+    do ip = 1, narrays
+
+       !select k-grid with twist or not (only gfun's require twist)
+       select case(ip) 
+         case(IGFUN, IGFUP, IGFDN) 
+            nk = nkt
+            ft_wgt => ft_wgt_t
+            ph = phase
+         case default
+            nk = nkg
+            ft_wgt => ft_wgt_g
+            ph = nint(ONE)
+       end select
+
+       !Fourier transform each bin and average
+       do ibin = P0%avg, 1, -1
+
+          !Pointer to property "ip" in bin "ibin"
+          curr   => P0%AllProp(P0%IARR(ip):P0%IARR(ip+1)-1, ibin) 
+
+          !Loop over inequvalent k-points
+          do ik = 1, nk
+
+             U = 0.d0
+             !Compute Fourier transform matrix at "ik" for (ja,ia)
+             do ia = 1, na
+                do ja = ia, na
+                   !sum over translations
+                   do it = 1, nt
+                      do jt = 1, nt
+                         !Find atom which is the translation of "ja" by "it"
+                         i = (it-1) * na + ia
+                         j = (jt-1) * na + ja
+                         !Use class that corresponds to the (i,j) pair 
+                         phcurr = ph(i,j) * curr(class(i,j))
+                         U(ja,ia) = U(ja,ia) + phcurr * ft_wgt(it,ik) * dconjg(ft_wgt(jt,ik))
+                      enddo
+                   enddo
+                enddo
+             enddo
+
+             !Pointer to Fourier transform of "ip" at "ik" in "ibin"
+             i = P0%IARRFT(ip) + (ik-1)*na*(na+1)/2
+             do ia = 1, na
+                do ja = ia, na
+                   P0%AllPropFT(i, ibin) = U(ja,ia)
+                   i = i + 1
+                enddo
+             enddo
+
+             !2015.12.17: No need for the following spectrum:
+!             currft => P0%AllPropEigVal(P0%IARREV(ip)+(ik-1)*na:P0%IARREV(ip)+ik*na-1, ibin) 
+
+             !Diagonalize Fourier transform matrix. Store eigenvalues in AllPropEigVal.
+!             if (ibin == P0%avg) then
+!                call zheev('V', 'L', na, U, na, currft, work, 2*na, rwork, it)
+                !Store eigenvectors as well for the average
+!                P0%AllPropEigVec(:,:,ik,ip) = U
+!             else
+!                call zheev('N', 'L', na, U, na, currft, work, 2*na, rwork, it)
+!                call zgemm('N', 'N', na, na, na, ONEZ, U, na, P0%AllPropEigVec(:,:,ik,ip), na, ZEROZ, W, na)
+!                call zgemm('T', 'N', na, na, na, ONEZ, P0%AllPropEigVec(:,:,ik,ip), na, W, na, ZEROZ, U, na)
+!                do i = 1, na
+!                   currft(i) = dreal(U(i,i))
+!                enddo
+!             endif
+
+          enddo ! Loop over k-points
+
+       enddo ! Loop over bins
+
+    enddo ! Loop over properties
+
+  end subroutine DQMC_Phy_GetFT
+
+  !--------------------------------------------------------------------!
+
+  subroutine DQMC_Phy_GetErrFT(P0)
+    use dqmc_mpi
+    !
+    ! Purpose
+    ! =======
+    !    This subroutine computes the error the Fourier Transform of all properties.
+    !
+    !  Pre-assumption
+    ! ===============
+    !    DQMC_Phy_GetFT was called.
+    !
+    ! Arguments
+    ! =========
+    !
+    type(Phy), intent(inout) :: P0                  !container
+
+    integer :: err, avg, n, m, nbin, i, nproc
+
+    nbin = P0%nbin
+    err  = P0%err
+    avg  = P0%avg
+    nproc = qmc_sim%size
+
+    n = size(P0%AllPropEigVal, 1)
+    m = size(P0%AllPropFT, 1)
+
+    if (nproc > 1) then
+
+       ! 11/20/2015: note here for MPI run
+       ! binned values() (only 1 bin) are not for MC, which has been
+       ! updated in JackKnife among procs in DQMC_TDM1_GetErr
+       ! avg value is already averaged over proc
+       ! see DQMC_TDM1_GetKFT
+       ! only need to compute error
+
+#      ifdef _QMC_MPI
+          call mpi_allreduce((P0%AllPropEigVal(:,1)-P0%AllPropEigVal(:,avg))**2, P0%AllPropEigVal(:,err), n, mpi_double, &
+             mpi_sum, mpi_comm_world, i)
+          call mpi_allreduce((P0%AllPropFT(:,1)-P0%AllPropFT(:,avg))**2, P0%AllPropFT(:,err), m, mpi_double, &
+             mpi_sum, mpi_comm_world, i)
+#      endif
+!       P0%AllPropEigVal(:,err) = sqrt(P0%AllPropEigVal(:,err) * dble(nproc-1)/dble(nproc))
+       P0%AllPropFT(:,err) = sqrt(P0%AllPropFT(:,err) * dble(nproc-1)/dble(nproc))
+
+    else
+
+       !Compute errorbars using bins
+!       do i = 1, n
+!          P0%AllPropEigVal(i,err) = sqrt((nbin-1)*sum((P0%AllPropEigVal(i,avg) - P0%AllPropEigVal(i,1:nbin))**2)/nbin)
+!       enddo
+  
+       do i = 1, m
+          P0%AllPropFT(i,err) = sqrt((nbin-1)*sum((P0%AllPropFT(i,avg) - P0%AllPropFT(i,1:nbin))**2)/nbin)
+       enddo
+  
+    endif
+
+  end  subroutine DQMC_Phy_GetErrFT
+
+  !--------------------------------------------------------------------!
+  
+  subroutine DQMC_Phy_PrintFT(P0, na, nkt, nkg, OPT)
+
+    use dqmc_mpi
+    !
+    ! Purpose
+    ! =======
+    !    This subroutine prints out the Fourier transform.
+    !    Labels need to be produced separately.
+    !
+    !  Pre-assumption
+    ! ===============
+    !    OPT is a file handle
+    !    DQMC_Phy_GetErrFT was called.
+    !
+    ! Arguments
+    ! =========
+    !
+    type(Phy), intent(in)    :: P0        ! Phy
+    integer, intent(in)       :: OPT       ! Output file handle
+    integer, intent(in)       :: na        ! number of sites in unit cell
+    integer, intent(in)       :: nkt, nkg  ! number of non-equivalent k-points
+
+    ! ... Local varaiables ...
+    integer :: i, ia, ja, ii, avg, err, nakt, nakg
+    real(wp), pointer :: FTptr(:,:) 
+    complex*16, pointer :: Nmptr(:,:,:) 
+    character(len=30), pointer :: clabel(:) 
+
+    if (qmc_sim%rank /= 0) return
+
+    avg    = P0%avg
+    err    = P0%err
+    nakt    = na*nkt
+    nakg    = na*nkg
+
+    allocate(clabel(max(nakt,nakg)*(na+1)/2))
+
+    ! ... Executable ...
+    ii = 0 
+    do i = 1, nkt
+       do ia = 0, na - 1
+          do ja = ia, na - 1
+             ii = ii + 1
+             if (ia + ja == 0) then
+                write(clabel(ii),'(3(i5))')i, ja, ia
+             else
+                write(clabel(ii),'(5x,2(i5))')ja, ia
+             endif
+          enddo
+       enddo
+    enddo
+    FTptr => P0%AllPropFT(P0%IARRFT(IGFUN):P0%IARRFT(IGFUN+1)-1,:)
+    call DQMC_Print_RealArray(0, nakt*(na+1)/2, "FT of Ave Equal t Green's function:", &
+         clabel, FTptr(:, avg:avg), FTptr(:, err:err), OPT)
+
+    FTptr => P0%AllPropFT(P0%IARRFT(IGFUP):P0%IARRFT(IGFUP+1)-1,:)
+    call DQMC_Print_RealArray(0, nakt*(na+1)/2, "FT of Up Equal t Green's function:", &
+         clabel, FTptr(:, avg:avg), FTptr(:, err:err), OPT)
+
+    FTptr => P0%AllPropFT(P0%IARRFT(IGFDN):P0%IARRFT(IGFDN+1)-1,:)
+    call DQMC_Print_RealArray(0, nakt*(na+1)/2, "FT of Dn Equal t Green's function:", &
+         clabel, FTptr(:, avg:avg), FTptr(:, err:err), OPT)
+
+    ii = 0 
+    do i = 1, nkg
+       do ia = 0, na-1
+          do ja = ia, na-1
+             ii = ii + 1
+             if (ia+ja == 0) then
+                write(clabel(ii),'(3(i5))')i, ja, ia
+             else
+                write(clabel(ii),'(5x,2(i5))')ja, ia
+             endif
+          enddo
+       enddo
+    enddo
+    FTptr => P0%AllPropFT(P0%IARRFT(IDEN0):P0%IARRFT(IDEN0+1)-1,:)
+    call DQMC_Print_RealArray(0, nakg*(na+1)/2, "FT of Density-density correlation fn: (up-up)", &
+         clabel, FTptr(:, avg:avg), FTptr(:, err:err), OPT)
+
+    FTptr => P0%AllPropFT(P0%IARRFT(IDEN1):P0%IARRFT(IDEN1+1)-1,:)
+    call DQMC_Print_RealArray(0, nakg*(na+1)/2, "FT of Density-density correlation fn: (up-dn)", &
+         clabel, FTptr(:, avg:avg), FTptr(:, err:err), OPT)
+
+    FTptr => P0%AllPropFT(P0%IARRFT(ISPXX):P0%IARRFT(ISPXX+1)-1,:)
+    call DQMC_Print_RealArray(0, nakg*(na+1)/2, "FT of XX spin correlation fn:", &
+         clabel, FTptr(:, avg:avg), FTptr(:, err:err), OPT)
+
+    FTptr => P0%AllPropFT(P0%IARRFT(ISPZZ):P0%IARRFT(ISPZZ+1)-1,:)
+    call DQMC_Print_RealArray(0, nakg*(na+1)/2, "FT of ZZ spin correlation fn:", &
+         clabel, FTptr(:, avg:avg), FTptr(:, err:err), OPT)
+
+    FTptr => P0%AllPropFT(P0%IARRFT(IAVSP):P0%IARRFT(IAVSP+1)-1,:)
+    call DQMC_Print_RealArray(0, nakg*(na+1)/2, "FT of Average spin correlation fn:", &
+         clabel, FTptr(:, avg:avg), FTptr(:, err:err), OPT)
+
+    FTptr => P0%AllPropFT(P0%IARRFT(IPAIR):P0%IARRFT(IPAIR+1)-1,:)
+    call DQMC_Print_RealArray(0, nakg*(na+1)/2, "FT of Pairing correlation fn:", &
+         clabel, FTptr(:, avg:avg), FTptr(:, err:err), OPT)
+
+    FTptr => P0%AllPropFT(P0%IARRFT(IPAIRd):P0%IARRFT(IPAIRd+1)-1,:)
+     call DQMC_Print_RealArray(0, nakg*(na+1)/2, "FT of d-wave Pairing correlation fn:", &
+          clabel, FTptr(:, avg:avg), FTptr(:, err:err), OPT)
+
+    !2015.12.17: No need for the following spectrum:
+!    if (na > 1) then
+
+!       ii = 0 
+!       do i = 1, nkt
+!          do ia = 1, na
+!             ii = ii + 1
+!             if (ia == 1) then
+!                write(clabel(ii),'(2(i5))')i, ia
+!             else
+!                write(clabel(ii),'(5x,i5)')ia
+!             endif
+!          enddo
+!       enddo
+!       FTptr => P0%AllPropEigVal(P0%IARREV(IGFUN):P0%IARREV(IGFUN+1)-1,:)
+!       call DQMC_Print_RealArray(0, nakt, "Eigenvalues of Ave Equal t Green's function:", &
+!            clabel, FTptr(:, avg:avg), FTptr(:, err:err), OPT)
+
+!       FTptr => P0%AllPropEigVal(P0%IARREV(IGFUP):P0%IARREV(IGFUP+1)-1,:)
+!       call DQMC_Print_RealArray(0, nakt, "Eigenvalues of Up Equal t Green's function:", &
+!            clabel, FTptr(:, avg:avg), FTptr(:, err:err), OPT)
+
+!       FTptr => P0%AllPropEigVal(P0%IARREV(IGFDN):P0%IARREV(IGFDN+1)-1,:)
+!       call DQMC_Print_RealArray(0, nakt, "Eigenvalues of Dn Equal t Green's function:", &
+!            clabel, FTptr(:, avg:avg), FTptr(:, err:err), OPT)
+
+!       ii = 0 
+!       do i = 1, nkg
+!          do ia = 1, na
+!             ii = ii + 1
+!             if (ia == 1) then
+!                write(clabel(ii),'(2(i5))')i, ia
+!             else
+!                write(clabel(ii),'(5x,i5)')ia
+!             endif
+!          enddo
+!       enddo
+!       FTptr => P0%AllPropEigVal(P0%IARREV(IDEN0):P0%IARREV(IDEN0+1)-1,:)
+!       call DQMC_Print_RealArray(0, nakg, "Eigenvalues of Density-density correlation fn: (up-up)", &
+!            clabel, FTptr(:, avg:avg), FTptr(:, err:err), OPT)
+
+!       FTptr => P0%AllPropEigVal(P0%IARREV(IDEN1):P0%IARREV(IDEN1+1)-1,:)
+!       call DQMC_Print_RealArray(0, nakg, "Eigenvalues of Density-density correlation fn: (up-dn)", &
+!            clabel, FTptr(:, avg:avg), FTptr(:, err:err), OPT)
+
+!       FTptr => P0%AllPropEigVal(P0%IARREV(ISPXX):P0%IARREV(ISPXX+1)-1,:)
+!       call DQMC_Print_RealArray(0, nakg, "Eigenvalues of XX spin correlation fn:", &
+!            clabel, FTptr(:, avg:avg), FTptr(:, err:err), OPT)
+
+!       FTptr => P0%AllPropEigVal(P0%IARREV(ISPZZ):P0%IARREV(ISPZZ+1)-1,:)
+!       call DQMC_Print_RealArray(0, nakg, "Eigenvalues of ZZ spin correlation fn:", &
+!            clabel, FTptr(:, avg:avg), FTptr(:, err:err), OPT)
+
+!       FTptr => P0%AllPropEigVal(P0%IARREV(IAVSP):P0%IARREV(IAVSP+1)-1,:)
+!       call DQMC_Print_RealArray(0, nakg, "Eigenvalues of Average spin correlation fn:", &
+!            clabel, FTptr(:, avg:avg), FTptr(:, err:err), OPT)
+
+!       FTptr => P0%AllPropEigVal(P0%IARREV(IPAIR):P0%IARREV(IPAIR+1)-1,:)
+!       call DQMC_Print_RealArray(0, nakg, "Eigenvalues of Pairing correlation fn:", &
+!            clabel, FTptr(:, avg:avg), FTptr(:, err:err), OPT)
+
+!       Nmptr => P0%AllPropEigVec(:,:,:,IGFUN)
+!       call DQMC_Print_EigenMode(na, nkt, "Eigenmodes of Ave Equal t Green's function (Natural orbitals):", &
+!             Nmptr, OPT)
+
+!       Nmptr => P0%AllPropEigVec(:,:,:,IGFUP)
+!       call DQMC_Print_EigenMode(na, nkt, "Eigenmodes of Up Equal t Green's function (Natural orbitals):", &
+!             Nmptr, OPT)
+
+!       Nmptr => P0%AllPropEigVec(:,:,:,IGFDN)
+!       call DQMC_Print_EigenMode(na, nkt, "Eigenmodes of Down Equal t Green's function (Natural orbitals):", &
+!             Nmptr, OPT)
+
+!       Nmptr => P0%AllPropEigVec(:,:,:,IDEN0)
+!       call DQMC_Print_EigenMode(na, nkg,"Eigenmodes of Density-density correlation fn: (up-up)", &
+!             Nmptr, OPT)
+
+!       Nmptr => P0%AllPropEigVec(:,:,:,IDEN1)
+!       call DQMC_Print_EigenMode(na, nkg, "Eigenmodes of Density-density correlation fn: (up-dn)", &
+!             Nmptr, OPT)
+
+!       Nmptr => P0%AllPropEigVec(:,:,:,ISPXX)
+!       call DQMC_Print_EigenMode(na, nkg, "Eigenmodes of XX-Spin correlation fn: ", &
+!             Nmptr, OPT)
+
+!       Nmptr => P0%AllPropEigVec(:,:,:,ISPZZ)
+!       call DQMC_Print_EigenMode(na, nkg, "Eigenmodes of ZZ-Spin correlation fn: ", &
+!             Nmptr, OPT)
+
+!       Nmptr => P0%AllPropEigVec(:,:,:,IAVSP)
+!       call DQMC_Print_EigenMode(na, nkg, "Eigenmodes of Average Spin correlation fn: ", &
+!             Nmptr, OPT)
+
+!       Nmptr => P0%AllPropEigVec(:,:,:,IPAIR)
+!       call DQMC_Print_EigenMode(na, nkg, "Eigenmodes of Pairing correlation fn: ", &
+!             Nmptr, OPT)
+
+!    endif
+
+    deallocate(clabel)
+
+  end subroutine DQMC_Phy_PrintFT
+
+end module DQMC_Phy
