@@ -1535,7 +1535,7 @@ contains
                 z2 = T1%cartpos(3,j-1)
 
                 ! if PAM (P_ffff only temporarily), then skip some terms
-                ! 250502 To compute pairing between d-d orbitals
+                ! 250502 To compute pairing in 3band model
                 if (model == 0 .and. (mod(i-1,3)/=0 .or. mod(j-1,3)/=0)) then
                     cycle
                 endif
@@ -2649,7 +2649,11 @@ contains
     ! set correction factor considering No.orb per site
     select case (model)
       ! hubbard square
-      ! 250515 3band
+      ! 250515 change model0 to 3band
+      ! 250823 An O-s orb is added above Cu-dx2y2 orb, leading to a 4-orb model. 
+      !        Since we primarily focus on the pairing between d-d, the s component in tensor Pd is not cumputed.
+      !        So it shares the same Pd codes with 3-band model. 
+      !        The 'correction' relies on the num of orbs in each unit cell.
       case (0)
         correction = 3
 
@@ -2900,8 +2904,10 @@ contains
          ! divide it again to obtain the signed average 
          ! see 2011 CT-QMC review Eq.(41)
          if (it<T1%L) then
-           value1 = T1%properties(IGFUP)%values(:, it, idx)/T1%sgn(idx)
-           value2 = T1%properties(IGFDN)%values(:, it, idx)/T1%sgn(idx)
+
+            value1 = T1%properties(IGFUP)%values(:, it, idx)/T1%sgn(idx)
+            value2 = T1%properties(IGFDN)%values(:, it, idx)/T1%sgn(idx)
+
           !  value1 = T1%properties(IGFUN)%values(:, it, idx)/T1%sgn(idx)
           !  value2 = T1%properties(IGFUN)%values(:, it, idx)/T1%sgn(idx)
          else
@@ -4182,6 +4188,7 @@ contains
    
     if (T1%flags(IPAIRd) == 1) then
        ! Pd and Pd0
+       write(OPT,*) "0: total 1: dddd 2: dddp 3: dddx 4: ddxx 5: dxdx 6: dxxx 7: xxxx 8: ddxy 9: yyyy"
        do i = 1,T1%NPd
          write(OPT,"(a20,i3,4(e16.8))") 'Pd and Pd0 = ',          &
                          i, T1%Pd (T1%avg, i), T1%Pd (T1%err, i), &

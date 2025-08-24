@@ -18,7 +18,7 @@ module DQMC_Cfg
   ! string length
   integer, parameter :: slen = 100
   integer, parameter :: llen = 256
-  integer, parameter :: alen = 10    ! array limit
+  integer, parameter :: alen = 11    ! when u read the value of a parameter, like "Flags = 1,0,0,0.....", alen controls the maximum length of the array 
 
   ! status param
   integer, parameter :: STAT_EOF     = -1
@@ -668,6 +668,7 @@ contains
 
     ! Fetch input file name from command line
     call get_command_argument(1, iname, STATUS=status)
+
     if (status > 0) then
        call DQMC_Error("failed to retrieve input file argument", 0)
     elseif (status == -1) then
@@ -719,8 +720,8 @@ contains
           pos = scan(str, SEPARAT, .false.)
 
           if (pos .ne. 0) then
-             ! read name and data 
-             attr = adjustl(str(1:pos-1))
+             ! read name and data, i.e. in the input file, lines like "mu_up = 0.1"
+             attr = adjustl(str(1:pos-1))  
              val  = adjustl(str(pos+1:llen))
 
              ! search parameter definition

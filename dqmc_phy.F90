@@ -177,7 +177,7 @@ module DQMC_Phy
        "Den*Den AF structure factor : ", &
        "Den+Den AF structure factor : ", &
        " s-wave FM structure factor : ", &
-       " d-wave FM structure factor : ", &
+       " d-wave    structure factor : ", &
        " XX (pi,0) structure factor : ", &
        " ZZ (pi,0) structure factor : "/)
   character(len=*), parameter :: P0_SIGN_STR(3) = (/&
@@ -474,15 +474,27 @@ contains
     allocate(P0%hopdn(1:S%nSite,1:S%nSite))
 
     do i = 1, S%nSite
-       P0%rt(i, :)  = Gwrap%Hamilt%rt(i-1, :)+1
-       P0%rt(i, :)  = Gwrap%Hamilt%lf(i-1, :)+1
-       P0%top(i, :) = Gwrap%Hamilt%up(i-1, :)+1
-       P0%bot(i, :) = Gwrap%Hamilt%dn(i-1, :)+1
+         if (mod(i, 3)==1) then
+            P0%rt(i, :)  = Gwrap%Hamilt%rt(i-1, :)+1
+            P0%lf(i, :)  = Gwrap%Hamilt%lf(i-1, :)+1
+            P0%top(i, :) = Gwrap%Hamilt%up(i-1, :)+1
+            P0%bot(i, :) = Gwrap%Hamilt%dn(i-1, :)+1
+         else
+            P0%rt(i, :)  = Gwrap%Hamilt%rt(i-1, :)+1
+            P0%lf(i, :)  = Gwrap%Hamilt%lf(i-1, :)+1
+            P0%top(i, :) = Gwrap%Hamilt%up(i-1, :)+1
+            P0%bot(i, :) = Gwrap%Hamilt%dn(i-1, :)+1
+         endif
+
+
+
        do j = 1, S%nSite
           P0%hopup(i,j) = Gwrap%Hamilt%hopup(i-1,j-1)
           P0%hopdn(i,j) = Gwrap%Hamilt%hopdn(i-1,j-1)
        enddo
     enddo
+
+
 
     allocate(P0%cartpos(3, 0:S%nSite-1))
     P0%cartpos = Gwrap%lattice%cartpos
@@ -570,6 +582,8 @@ contains
     integer, pointer  :: A(:) 
     integer, allocatable :: cf(:)
 
+    real(wp), parameter :: eps = 1.0e-16_wp
+
     ! Auxiliary variable for chi_thermal and C_v
     real(wp) :: Cbar, Nbar, Tbar, un
     real(wp) :: h_up(n, n), h_dn(n, n) 
@@ -640,8 +654,10 @@ contains
        var4 = 1.0d0 - P0%up(i) - P0%dn(i) + var1
        ! var4 sometimes can be negative in MC process so that Eloc = NaN
        !write(*,*) 'Eloc ', var4
-       P0%Eloc(k, tmp) = P0%Eloc(k, tmp) - var1*log(var1) - var2*log(var2) &
-                                         - var3*log(var3) - var4*log(var4)
+
+       P0%Eloc(k, tmp) = P0%Eloc(k, tmp) - &
+            var1*log(max(var1, eps)) - var2*log(max(var2, eps)) - &
+            var3*log(max(var3, eps)) - var4*log(max(var4, eps))
 
        !=====================================================================!
        ! Potential energy (P0%up(i)-0.5d0) * (P0%dn(i)-0.5d0) * U(S%Map(i))
@@ -974,6 +990,7 @@ contains
                         k = S%D(ire,jre)
                         do al1 = 1, 3
                            do al4 = 1, 3
+
                               a16 =  G_dn(P0%rt(i, al4), P0%rt(j, al1)) - G_dn(P0%rt(i, al4), P0%top(j, al1))  &
                                     +G_dn(P0%rt(i, al4), P0%lf(j, al1)) - G_dn(P0%rt(i, al4), P0%bot(j, al1))  &
                                     -G_dn(P0%top(i, al4), P0%rt(j, al1)) + G_dn(P0%top(i, al4), P0%top(j, al1))  &
@@ -1282,7 +1299,7 @@ contains
     type(Phy), intent(inout) :: P0     ! Phy
     
     ! ... local scalar ...
-    real(wp) :: factor, var1, var2, var3, var4
+    real(wp) :: factor, var1, var2, var3, var4, eps
     integer  :: idx, n, k
 
     ! ... Executable ...
@@ -1331,8 +1348,15 @@ contains
       var2 = 1.0d0 - P0%Gf_up(k, idx) - var1
       var3 = 1.0d0 - P0%Gf_dn(k, idx) - var1
       var4 = 1.0d0 - var1 - var2 - var3
-      P0%Eloc(k, idx) = - var1*log(var1) - var2*log(var2) &
-                        - var3*log(var3) - var4*log(var4)
+      
+      eps = 1.0e-16_wp
+
+      ! Now compute Eloc safely
+      P0%Eloc(k, idx) = var1*log(max(var1, eps)) - var2*log(max(var2, eps)) - &
+            var3*log(max(var3, eps)) - var4*log(max(var4, eps))
+   
+            
+      
     enddo
 
     !write(*,*) 'DQMC_Phy_Avg var4= ', var4, ", Eloc=", P0%Eloc(1,idx)
