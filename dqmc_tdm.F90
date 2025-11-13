@@ -1536,7 +1536,7 @@ contains
 
                 ! if PAM (P_ffff only temporarily), then skip some terms
                 ! 250502 To compute pairing in 3band model
-                if (model == 0 .and. (mod(i-1,3)/=0 .or. mod(j-1,3)/=0)) then
+                if (model == 0 .and. (mod(i-1,4)/=0 .or. mod(j-1,4)/=0)) then
                     cycle
                 endif
 
@@ -1579,7 +1579,7 @@ contains
                 ! al1 to al4 denotes different d, px and py orbitals.
                 ! Following WeiWu2019's order: al1 and al4 for 16 possible Gdn(i+d,j+d') while al2 and al3 for upt0
                 ! mod(i-1,3) is because of the definition of neighbor in dqmc_hamilt.F90
-                if (mod(i-1,3)==0 .and. mod(j-1,3)==0) then
+                if (mod(i-1,4)==0 .and. mod(j-1,4)==0) then
                   do al2 = 1, 3
                     do al3 = 1, 3
                       ire = i+al2-1
@@ -2310,7 +2310,7 @@ contains
 
             ! if PAM (P_ffff only temporarily), then skip some terms
             ! 250502 compute d-d pairing in 3band Hubbard model
-            if (model == 0 .and. (mod(i-1,3)/=0 .or. mod(j-1,3)/=0)) then
+            if (model == 0 .and. (mod(i-1,4)/=0 .or. mod(j-1,4)/=0)) then
                 cycle
             endif
 
@@ -2348,7 +2348,7 @@ contains
             ! 4 neighbors of each site so that totally 16 terms
             ! with different phase factors for d-wave pairing
             ! record all 16 possible Gdn(i+d,j+d') as a below
-            if (mod(i-1,3)==0 .and. mod(j-1,3)==0) then
+            if (mod(i-1,4)==0 .and. mod(j-1,4)==0) then
               do al2 = 1,   3
                 do al3 = 1,   3
                   ire = i+al2-1
@@ -2934,7 +2934,7 @@ contains
                 z2 = T1%cartpos(3,j-1)
 
                 
-                if (model == 0 .and. (mod(i-1,3)/=0 .or. mod(j-1,3)/=0)) then
+                if (model == 0 .and. (mod(i-1,4)/=0 .or. mod(j-1,4)/=0)) then
                       cycle
                 endif
 
@@ -2968,7 +2968,7 @@ contains
                 ! with different phase factors for d-wave pairing
                 ! record all 16 possible Gdn(i+d,j+d') as a below
                 ! *0.25 or /4 is convention, see the computation of Pd
-                if (mod(i-1,3)==0 .and. mod(j-1,3)==0) then
+                if (mod(i-1,4)==0 .and. mod(j-1,4)==0) then
                   do al2 = 1, 3
                     do al3 = 1, 3
                       ! 250516 ire and jre stand for real i and j because i = 1,T1%properties(IPAIRd)%n only loops over d orbitals
@@ -4188,7 +4188,7 @@ contains
    
     if (T1%flags(IPAIRd) == 1) then
        ! Pd and Pd0
-       write(OPT,*) "0: total 1: dddd 2: dddp 3: dddx 4: ddxx 5: dxdx 6: dxxx 7: xxxx 8: ddxy 9: yyyy"
+       write(OPT,*) "1: total 2: dddx 3: dddx 4: ddxx 5: dxdx 6: dxxx 7: xxxx 8: ddxy 9: yyyy"
        do i = 1,T1%NPd
          write(OPT,"(a20,i3,4(e16.8))") 'Pd and Pd0 = ',          &
                          i, T1%Pd (T1%avg, i), T1%Pd (T1%err, i), &
@@ -5153,6 +5153,7 @@ contains
                tdmgk = T1%properties(gflist(h))%valueskold(i:j,0:L-1,m)
                call convert_to_iwn(tdmgk, tdmgkw)
 
+
                ! collect G(k,w) for each bin
                binGkw = tdmgkw
                errGkw = ZERO
@@ -5213,6 +5214,7 @@ contains
           complex(wp) :: valuetl(0:L-1), valuewl(0:L-1)
           integer     :: ipl, jpl, ijpl
           complex(wp), parameter :: unum=(1.0_wp,0.0_wp), nil=(0.0_wp,0.0_wp)
+          print*, 'tdmgtau(1,:)=', tdmgtau(1,0:L-1)
           ijpl = 0
           do ipl = 1, np
              do jpl = ipl, np

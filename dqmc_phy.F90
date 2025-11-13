@@ -474,7 +474,7 @@ contains
     allocate(P0%hopdn(1:S%nSite,1:S%nSite))
 
     do i = 1, S%nSite
-         if (mod(i, 3)==1) then
+         if (mod(i, 4)==1) then
             P0%rt(i, :)  = Gwrap%Hamilt%rt(i-1, :)+1
             P0%lf(i, :)  = Gwrap%Hamilt%lf(i-1, :)+1
             P0%top(i, :) = Gwrap%Hamilt%up(i-1, :)+1
@@ -982,7 +982,7 @@ contains
           else
               P0%Pair(k,tmp)  = P0%Pair(k,tmp) + G_up(i,j) * G_dn(i,j)
               ! Below for 3band d-wave, more definition in WeiWu's 2019 PRX
-              if (mod(i-1,3)==0 .and. mod(j-1,3)==0) then
+              if (mod(i-1,4)==0 .and. mod(j-1,4)==0) then
                   do al2 = 1, 3
                     do al3 = 1, 3
                         ire = i+al2-1

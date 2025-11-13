@@ -327,7 +327,7 @@ contains
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     !!250502 for dd d-wave susceptibility
     do it = 0, nsites-1
-      if (mod(it, 3)==0) then                                                                                                        
+      if (mod(it, 4)==0) then                                                                                                        
          x = pos(1,it)                                                                                                       
          y = pos(2,it)
          z = pos(3,it)
@@ -352,7 +352,7 @@ contains
     enddo
     !!250502 for d-p d-wave susceptibility
     do it = 0, nsites-1
-      if (mod(it, 3)==0) then                                                                                                        
+      if (mod(it, 4)==0) then                                                                                                        
          x = nint(pos(1,it))                                                                                                       
          y = nint(pos(2,it))
          z = nint(pos(3,it))
@@ -373,7 +373,7 @@ contains
     if (qmc_sim%rank == qmc_sim%aggr_root) then
        write(*,*) "print out all d orbital rt, lf, up, dn neighboring d, px and py orbitals:"
        do is = 0, nsites-1
-         if (mod(is, 3)==0) then
+         if (mod(is, 4)==0) then
             write(*,*) is, "neighboring d :", hamilt%rt(is, 1), hamilt%lf(is, 1), hamilt%up(is, 1), hamilt%dn(is, 1)
             write(*,*) is, "neighboring px:", hamilt%rt(is, 2), hamilt%lf(is, 2), hamilt%up(is, 2), hamilt%dn(is, 2)
             write(*,*) is, "neighboring py:", hamilt%rt(is, 3), hamilt%lf(is, 3), hamilt%up(is, 3), hamilt%dn(is, 3)
@@ -381,7 +381,7 @@ contains
        enddo
        write(*,*) "print out all d orbital rt, lf, up, dn neighbors p orbitals:"
        do is = 0, nsites-1
-         if (mod(is, 3)==0) then
+         if (mod(is, 4)==0) then
             write(*,*) is, "neighbors:", hamilt%rt1(is), hamilt%lf1(is), hamilt%up1(is), hamilt%dn1(is)
          endif
        enddo
